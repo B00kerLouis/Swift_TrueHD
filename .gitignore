@@ -1,0 +1,19 @@
+.DS_Store
+.build/
+.swiftpm/
+Build/
+DerivedData/
+tmp/
+
+*.xcuserstate
+**/xcuserdata/
+
+# Generated elementary streams, companion records, and source masters.
+*.mlp
+*.mll
+*.log
+*.wav
+*.wave
+*.caf
+*.atmos
+*.mxf
