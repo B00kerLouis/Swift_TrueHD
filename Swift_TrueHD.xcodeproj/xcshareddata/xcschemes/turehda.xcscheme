@@ -14,9 +14,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "C95E8537300A267200E4D3E9"
-               BuildableName = "Swift_TrueHD.framework"
-               BlueprintName = "Swift_TrueHD"
+               BlueprintIdentifier = "A10000000000000000000008"
+               BuildableName = "turehda"
+               BlueprintName = "turehda"
                ReferencedContainer = "container:Swift_TrueHD.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -40,6 +40,16 @@
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
       allowLocationSimulation = "YES">
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "A10000000000000000000008"
+            BuildableName = "turehda"
+            BlueprintName = "turehda"
+            ReferencedContainer = "container:Swift_TrueHD.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
@@ -47,6 +57,16 @@
       savedToolIdentifier = ""
       useCustomWorkingDirectory = "NO"
       debugDocumentVersioning = "YES">
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "A10000000000000000000008"
+            BuildableName = "turehda"
+            BlueprintName = "turehda"
+            ReferencedContainer = "container:Swift_TrueHD.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
    </ProfileAction>
    <AnalyzeAction
       buildConfiguration = "Debug">

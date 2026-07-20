@@ -5,10 +5,10 @@
 
 import Darwin
 import Foundation
-import Swift_TrueHD
+import libtruehda
 
 @main
-private struct SwiftTrueHDCLI {
+private struct TurehdaCLI {
     static func main() async {
         do {
             try await run()
@@ -123,7 +123,7 @@ private struct SwiftTrueHDCLI {
         print(
             """
             Usage:
-              swift-truehd -i INPUT -o OUTPUT.mlp [options]
+              turehda -i INPUT -o OUTPUT.mlp [options]
 
             Options:
               -i, --input PATH                 Input WAVE, DAMF, or MXF IAB master

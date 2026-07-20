@@ -205,7 +205,7 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         frameCount: UInt64
     ) throws -> AtmosPreparedElementCache {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "swift-truehd-elements-\(UUID().uuidString).pcm64"
+            "turehda-elements-\(UUID().uuidString).pcm64"
         )
         guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
             throw CocoaError(.fileWriteUnknown)

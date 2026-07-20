@@ -82,7 +82,7 @@ tests. Build the macOS framework and CLI together with the shared Scheme:
 ```sh
 xcodebuild \
   -project Swift_TrueHD.xcodeproj \
-  -scheme "Build All" \
+  -scheme all \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -derivedDataPath Build/XcodeAllTargets \
@@ -90,8 +90,8 @@ xcodebuild \
 ```
 
 The framework and CLI are written to
-`Build/Products/Release/Swift_TrueHD.framework` and
-`Build/Products/Release/swift-truehd`. Both contain arm64 and x86_64 slices.
+`Build/Products/Release/libtruehda.framework` and
+`Build/Products/Release/turehda`. Both contain arm64 and x86_64 slices.
 
 Run the Xcode-managed test target with:
 
@@ -114,16 +114,16 @@ added without growing one flat directory:
 - `Swift_TrueHD/Encoding`: TrueHD and Atmos bitstream/spatial encoders.
 - `Swift_TrueHD/IO`: WAVE input and high-resolution timing output.
 - `Swift_TrueHD/API`: Objective-C bridge classes.
-- `CLI`: the `swift-truehd` executable entry point.
+- `CLI`: the `turehda` executable entry point.
 
 The Xcode synchronized source groups include these directories recursively.
-The shared `Build All` Scheme builds the Framework target first and then the CLI
-target; `SwiftTrueHDTests` is a separate Xcode-managed test target.
+The shared `all` Scheme builds the `libtruehda` framework target first and then
+the `turehda` CLI target; `SwiftTrueHDTests` is a separate Xcode-managed test target.
 
 ## CLI
 
 ```sh
-Build/Products/Release/swift-truehd \
+Build/Products/Release/turehda \
   -i /path/to/master-damf \
   -o atmos-master-14.mlp \
   --spatial-clusters 14
@@ -183,7 +183,7 @@ audio track must use codec ID `A_TRUEHD`; the raw MLP payload is not modified.
 ## Swift API
 
 ```swift
-import Swift_TrueHD
+import libtruehda
 
 let configuration = TrueHDEncoderConfiguration(spatialClusterCount: 14)
 // Optional overrides; defaults are 00:00:00:00 and the input frame rate.
@@ -204,7 +204,7 @@ print(result.manifestURL.path, result.logURL.path)
 ## Objective-C API
 
 ```objective-c
-#import <Swift_TrueHD/Swift_TrueHD-Swift.h>
+#import <libtruehda/libtruehda-Swift.h>
 
 STTrueHDEncoderConfiguration *configuration =
     [[STTrueHDEncoderConfiguration alloc] initWithSpatialClusterCount:14
@@ -223,7 +223,7 @@ STTrueHDEncoder *encoder = [STTrueHDEncoder new];
 ```
 
 The exact generated selector is available in the framework's
-`Swift_TrueHD-Swift.h` header.
+`libtruehda-Swift.h` header.
 
 ## Validation
 

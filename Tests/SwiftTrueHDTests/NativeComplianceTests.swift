@@ -2,7 +2,7 @@
 
 import Foundation
 import XCTest
-@testable import Swift_TrueHD
+@testable import libtruehda
 
 final class NativeComplianceTests: XCTestCase {
     func testDRCProfileDefaultsToFilmLightAndExposesStableNames() {

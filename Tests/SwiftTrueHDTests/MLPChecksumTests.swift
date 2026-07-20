@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import XCTest
-@testable import Swift_TrueHD
+@testable import libtruehda
 
 final class MLPChecksumTests: XCTestCase {
     func testChecksum16AgainstAtmosMajorSync() {

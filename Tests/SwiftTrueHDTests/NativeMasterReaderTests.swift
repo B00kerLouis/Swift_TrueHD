@@ -2,7 +2,7 @@
 
 import Foundation
 import XCTest
-@testable import Swift_TrueHD
+@testable import libtruehda
 
 final class NativeMasterReaderTests: XCTestCase {
     private func externalFixture(named variable: String) throws -> URL {
@@ -16,7 +16,7 @@ final class NativeMasterReaderTests: XCTestCase {
 
     func testCAFReaderDecodesLittleEndian24BitPCM() throws {
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swift-truehd-\(UUID().uuidString).caf")
+            .appendingPathComponent("turehda-\(UUID().uuidString).caf")
         defer { try? FileManager.default.removeItem(at: url) }
 
         var data = Data("caff\u{0}\u{1}\u{0}\u{0}desc".utf8)

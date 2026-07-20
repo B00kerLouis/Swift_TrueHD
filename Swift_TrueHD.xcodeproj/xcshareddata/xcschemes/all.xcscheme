@@ -14,9 +14,23 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "C95E8537300A267200E4D3E9"
+               BuildableName = "libtruehda.framework"
+               BlueprintName = "libtruehda"
+               ReferencedContainer = "container:Swift_TrueHD.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "A10000000000000000000008"
-               BuildableName = "swift-truehd"
-               BlueprintName = "SwiftTrueHDCLI"
+               BuildableName = "turehda"
+               BlueprintName = "turehda"
                ReferencedContainer = "container:Swift_TrueHD.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -45,8 +59,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A10000000000000000000008"
-            BuildableName = "swift-truehd"
-            BlueprintName = "SwiftTrueHDCLI"
+            BuildableName = "turehda"
+            BlueprintName = "turehda"
             ReferencedContainer = "container:Swift_TrueHD.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -62,8 +76,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A10000000000000000000008"
-            BuildableName = "swift-truehd"
-            BlueprintName = "SwiftTrueHDCLI"
+            BuildableName = "turehda"
+            BlueprintName = "turehda"
             ReferencedContainer = "container:Swift_TrueHD.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

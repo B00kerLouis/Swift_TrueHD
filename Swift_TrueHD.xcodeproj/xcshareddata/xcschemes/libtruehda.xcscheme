@@ -3,7 +3,7 @@
    LastUpgradeVersion = "2630"
    version = "1.3">
    <BuildAction
-      parallelizeBuildables = "NO"
+      parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES">
       <BuildActionEntries>
          <BuildActionEntry
@@ -15,22 +15,8 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "C95E8537300A267200E4D3E9"
-               BuildableName = "Swift_TrueHD.framework"
-               BlueprintName = "Swift_TrueHD"
-               ReferencedContainer = "container:Swift_TrueHD.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "A10000000000000000000008"
-               BuildableName = "swift-truehd"
-               BlueprintName = "SwiftTrueHDCLI"
+               BuildableName = "libtruehda.framework"
+               BlueprintName = "libtruehda"
                ReferencedContainer = "container:Swift_TrueHD.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -54,16 +40,6 @@
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
       allowLocationSimulation = "YES">
-      <BuildableProductRunnable
-         runnableDebuggingMode = "0">
-         <BuildableReference
-            BuildableIdentifier = "primary"
-            BlueprintIdentifier = "A10000000000000000000008"
-            BuildableName = "swift-truehd"
-            BlueprintName = "SwiftTrueHDCLI"
-            ReferencedContainer = "container:Swift_TrueHD.xcodeproj">
-         </BuildableReference>
-      </BuildableProductRunnable>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
@@ -71,16 +47,6 @@
       savedToolIdentifier = ""
       useCustomWorkingDirectory = "NO"
       debugDocumentVersioning = "YES">
-      <BuildableProductRunnable
-         runnableDebuggingMode = "0">
-         <BuildableReference
-            BuildableIdentifier = "primary"
-            BlueprintIdentifier = "A10000000000000000000008"
-            BuildableName = "swift-truehd"
-            BlueprintName = "SwiftTrueHDCLI"
-            ReferencedContainer = "container:Swift_TrueHD.xcodeproj">
-         </BuildableReference>
-      </BuildableProductRunnable>
    </ProfileAction>
    <AnalyzeAction
       buildConfiguration = "Debug">
