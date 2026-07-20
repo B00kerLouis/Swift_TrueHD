@@ -250,8 +250,11 @@ The regression workflow checks:
 See [VALIDATION.md](VALIDATION.md) for the current official-stream comparison,
 decoder results, rate distribution, and artifact hashes.
 
-This project is not Dolby-certified. Product distribution may require patent,
-trademark, format, and certification rights independent of the source code.
+This project has been tested for playback with Dolby Reference Player 4.2.0.
+This project is not Dolby-certified. No license to any Dolby patents,
+trademarks, format rights, or certification rights is granted by this project.
+Product distribution or commercial use may require rights or licenses
+independent of the source code license.
 
 ## License
 
