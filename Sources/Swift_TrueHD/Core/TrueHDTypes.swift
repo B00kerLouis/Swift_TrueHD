@@ -157,6 +157,17 @@ public struct TrueHDEncodingProgress: Sendable, Equatable {
     }
 }
 
+public struct TrueHDSpatialAccuracy: Sendable, Equatable {
+    public let intervalCount: Int
+    public let maximumActiveSpatialSources: Int
+    public let groupedIntervalCount: Int
+    public let sourceIntervalCount: Int
+    public let exactlyRepresentedSourceIntervals: Int
+    public let assignmentChangeCount: Int
+    public let maximumQuantizedPositionError: Double
+    public let energyWeightedRMSQuantizedPositionError: Double
+}
+
 public struct TrueHDEncodingResult: Sendable, Equatable {
     public let outputURL: URL
     public let profile: TrueHDProfile
@@ -170,6 +181,7 @@ public struct TrueHDEncodingResult: Sendable, Equatable {
     public let spatialClusterCount: Int
     public let elementBitDepth: Int
     public let drcProfile: TrueHDDRCProfile
+    public let spatialAccuracy: TrueHDSpatialAccuracy?
 
     public var manifestURL: URL {
         URL(fileURLWithPath: outputURL.path + ".mll")

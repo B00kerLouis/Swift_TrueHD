@@ -14,10 +14,104 @@ enum AtmosCompatibilityMatrix {
     static let centerCoefficient = Int64(11_599)
     static let halfCoefficient = Int64(1 << (fractionalBits - 1))
 
+    // DEE's object-to-7.1 compatibility renderer uses full-scale front
+    // speakers, a sqrt(3/4) side plane, and a 2^(-1/4) rear/height plane.
+    // Interpolating squared gain between those planes preserves energy while
+    // an Object moves through the room instead of snapping it to a fixed Bed
+    // speaker for the complete programme.
+    private static let sideRenderPower = 0.75
+    private static let rearRenderPower = 1 / sqrt(2.0)
+
     struct Row {
         let speakerChannel: Int
         let outputChannel: Int
         let coefficients: [Int32]
+        let coefficientMask: UInt16
+    }
+
+    /// Produces Q14 gains for the compatible `L R C LFE Ls Rs Lb Rb`
+    /// presentation. The renderer follows the three horizontal rows observed
+    /// in DEE reference streams: L-C-R at the front, Ls-Rs through the room,
+    /// and Lb-Rb at the rear. Each row and the transition between rows use
+    /// equal-power interpolation, retaining continuous left/right and
+    /// front/rear position in 8-, 6-, and 2-channel presentations.
+    static func renderCoefficients(for input: ADMPosition) -> [Int32] {
+        let position = input.clamped()
+        let x = position.x
+        let y = position.y
+        var unit = [Double](repeating: 0, count: 8)
+
+        func equalPowerPair(
+            first: Int,
+            second: Int,
+            fraction: Double
+        ) -> [(Int, Double)] {
+            let angle = min(1, max(0, fraction)) * .pi / 2
+            return [(first, cos(angle)), (second, sin(angle))]
+        }
+
+        let front: [(Int, Double)]
+        if x < 0 {
+            front = equalPowerPair(first: 0, second: 2, fraction: x + 1)
+        } else {
+            front = equalPowerPair(first: 2, second: 1, fraction: x)
+        }
+        let side = equalPowerPair(first: 4, second: 5, fraction: (x + 1) / 2)
+        let rear = equalPowerPair(first: 6, second: 7, fraction: (x + 1) / 2)
+
+        let firstRow: [(Int, Double)]
+        let secondRow: [(Int, Double)]
+        let rowFraction: Double
+        if y >= 0 {
+            firstRow = side
+            secondRow = front
+            rowFraction = y
+        } else {
+            firstRow = side
+            secondRow = rear
+            rowFraction = -y
+        }
+        let rowAngle = rowFraction * .pi / 2
+        let firstWeight = cos(rowAngle)
+        let secondWeight = sin(rowAngle)
+        for (speaker, gain) in firstRow { unit[speaker] += gain * firstWeight }
+        for (speaker, gain) in secondRow { unit[speaker] += gain * secondWeight }
+
+        let horizontalPower: Double
+        if y >= 0 {
+            horizontalPower = sideRenderPower
+                + (1 - sideRenderPower) * y
+        } else {
+            horizontalPower = sideRenderPower
+                + (sideRenderPower - rearRenderPower) * y
+        }
+        // DEE reaches its height/rear compatibility trim by z=0.5. Keeping the
+        // transition continuous avoids a level step for rising Objects.
+        let elevationBlend = max(0, 1 - 2 * abs(position.z))
+        let renderPower = rearRenderPower
+            + (horizontalPower - rearRenderPower) * elevationBlend
+        let renderGain = sqrt(renderPower)
+
+        return unit.map {
+            Int32(($0 * renderGain * Double(scale)).rounded())
+        }
+    }
+
+    /// Adds all spatial-element contributions before rounding upward. The
+    /// inverse lossless matrix uses the same Q14 sum, so the rounding residual
+    /// remains below one output unit and the immersive core is recovered.
+    static func foldedContribution(
+        spatialElements: ArraySlice<Int64>,
+        renderCoefficients: [[Int32]],
+        speaker: Int
+    ) -> Int64 {
+        precondition(spatialElements.count == renderCoefficients.count)
+        var accumulator: Int64 = 0
+        for (sample, coefficients) in zip(spatialElements, renderCoefficients) {
+            precondition(coefficients.count == 8)
+            accumulator += sample * Int64(coefficients[speaker])
+        }
+        return roundedUpAccumulator(accumulator)
     }
 
     /// Converts standard `L R C LFE Ls Rs Lb Rb` samples to the cumulative
@@ -88,9 +182,9 @@ enum AtmosCompatibilityMatrix {
     /// remove the compatible object fold from the immersive presentation.
     static func immersiveRows(
         channelCount: Int,
-        matrixRenderTargets: [[Int]]
+        renderCoefficients: [[Int32]]
     ) -> [Row] {
-        precondition(channelCount >= 8 + matrixRenderTargets.count)
+        precondition(channelCount >= 8 + renderCoefficients.count)
         func makeRow(
             speaker: Int,
             inverseTransportFold: Bool,
@@ -98,32 +192,43 @@ enum AtmosCompatibilityMatrix {
         ) -> Row {
             let output = matrixChannel(forSpeakerChannel: speaker)
             var coefficients = [Int32](repeating: 0, count: channelCount)
+            var coefficientMask: UInt16 = 0
+            func set(_ channel: Int, _ coefficient: Int32, alwaysPresent: Bool = false) {
+                coefficients[channel] = coefficient
+                if coefficient != 0 || alwaysPresent {
+                    coefficientMask |= 1 << UInt16(channel)
+                }
+            }
             switch (speaker, inverseTransportFold) {
             case (0, true):
-                coefficients[0] = Int32(scale)
-                coefficients[2] = -Int32(scale)
-                coefficients[4] = -Int32(centerCoefficient)
+                set(0, Int32(scale))
+                set(2, -Int32(scale))
+                set(4, -Int32(centerCoefficient))
             case (7, true):
-                coefficients[1] = Int32(scale)
-                coefficients[3] = -Int32(scale)
-                coefficients[4] = -Int32(centerCoefficient)
-                coefficients[7] = -Int32(scale)
+                set(1, Int32(scale))
+                set(3, -Int32(scale))
+                set(4, -Int32(centerCoefficient))
+                set(7, -Int32(scale))
             case (6, true):
-                coefficients[2] = Int32(scale)
-                coefficients[6] = -Int32(scale)
+                set(2, Int32(scale))
+                set(6, -Int32(scale))
             default:
-                coefficients[output] = Int32(scale)
+                set(output, Int32(scale))
             }
             if inverseObjectFold {
-                for (cluster, targets) in matrixRenderTargets.enumerated()
-                    where targets.contains(speaker) {
-                    coefficients[8 + cluster] = -Int32(halfCoefficient)
+                for (cluster, render) in renderCoefficients.enumerated() {
+                    // Every spatial coefficient remains in the configuration
+                    // mask even while its current value is zero. Ordinary AUs
+                    // can then update gains without repeatedly allocating new
+                    // matrix configurations in strict decoders.
+                    set(8 + cluster, -render[speaker], alwaysPresent: true)
                 }
             }
             return Row(
                 speakerChannel: speaker,
                 outputChannel: output,
-                coefficients: coefficients
+                coefficients: coefficients,
+                coefficientMask: coefficientMask
             )
         }
 
@@ -145,12 +250,12 @@ enum AtmosCompatibilityMatrix {
 
     static func immersiveOutput(
         _ transport: ArraySlice<Int32>,
-        matrixRenderTargets: [[Int]]
+        renderCoefficients: [[Int32]]
     ) -> [Int32] {
         var values = transport.map(Int64.init)
         for row in immersiveRows(
             channelCount: values.count,
-            matrixRenderTargets: matrixRenderTargets
+            renderCoefficients: renderCoefficients
         ) {
             let accumulator = zip(values, row.coefficients).reduce(Int64(0)) {
                 $0 + $1.0 * Int64($1.1)
@@ -168,8 +273,13 @@ enum AtmosCompatibilityMatrix {
     }
 
     private static func roundedUpProduct(_ value: Int64, _ coefficient: Int64) -> Int64 {
-        let product = value * coefficient
-        return product >= 0 ? (product + scale - 1) / scale : product / scale
+        roundedUpAccumulator(value * coefficient)
+    }
+
+    private static func roundedUpAccumulator(_ accumulator: Int64) -> Int64 {
+        accumulator >= 0
+            ? (accumulator + scale - 1) / scale
+            : accumulator / scale
     }
 
     private static func rematrix(_ accumulator: Int64) -> Int32 {
@@ -207,7 +317,7 @@ private struct AtmosEntropyState: Sendable {
 
 private struct PreparedAtmosAccessUnit: Sendable {
     let samples: [Int32]
-    let metadataPositions: [ADMPosition]?
+    let metadataUpdates: [AtmosMetadataUpdate]?
     let metadataSampleOffset: Int
     let actualFrameCount: Int
     let frameIndex: UInt64
@@ -215,7 +325,7 @@ private struct PreparedAtmosAccessUnit: Sendable {
     let restartLosslessChecks: [UInt32]
     let restartNoiseGeneratorSeeds: [UInt32]
     let shortenBy: Int
-    let matrixRenderTargets: [[Int]]
+    let matrixRenderCoefficients: [[Int32]]
     let highResolutionTiming: Bool
     let drcUpdates: [Int?]
 }
@@ -224,7 +334,7 @@ private struct PreparedAtmosSpatialBlock: Sendable {
     let samples: [Int32]
     let actualFrameCount: Int
     let sourceFrame: UInt64
-    let matrixRenderTargets: [[Int]]
+    let matrixRenderCoefficients: [[Int32]]
 }
 
 private final class PreparedAtmosSpatialStore: @unchecked Sendable {
@@ -309,6 +419,9 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
 
     private var decodedOutputShift: Int { 24 - elementBitDepth }
     private var encodedChannelCount: Int { spatialClusterCount }
+    private var oamdSignalPositionIndices: [Int] {
+        Self.oamdPositionOrder(elementCount: spatialClusterCount)
+    }
 
     init(configuration: TrueHDEncoderConfiguration, elementBitDepth: Int = 20) throws {
         guard AtmosSpatialCoder.supportedElementCounts.contains(configuration.spatialClusterCount) else {
@@ -387,6 +500,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             startFrame: sourceTiming.inputStartFrame,
             frameCount: inputFrameCount
         )
+        let spatialAccuracy = spatialCoder.spatialAccuracyReport()
         spatialCoder.setAdditionalHeadroomShift(elementCache.headroomShift)
         let cachedElements = try FileHandle(forReadingFrom: elementCache.url)
         defer {
@@ -415,7 +529,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         )
 
         let parallelIntervalCount = max(
-            1, min(8, ProcessInfo.processInfo.activeProcessorCount)
+            1, min(16, ProcessInfo.processInfo.activeProcessorCount)
         )
         let batchAccessUnitCapacity = restartInterval * parallelIntervalCount
 
@@ -443,41 +557,48 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             let spatialBlockCount = (requestedFrames + Self.samplesPerAccessUnit - 1)
                 / Self.samplesPerAccessUnit
             let spatialStore = PreparedAtmosSpatialStore(count: spatialBlockCount)
-            DispatchQueue.concurrentPerform(iterations: spatialBlockCount) { blockIndex in
-                let frameOffset = blockIndex * Self.samplesPerAccessUnit
-                let blockFrameCount = min(
-                    Self.samplesPerAccessUnit, requestedFrames - frameOffset
-                )
-                let sampleStart = frameOffset * encodedChannelCount
-                let sampleEnd = (frameOffset + blockFrameCount) * encodedChannelCount
-                let blockSourceFrame = batchStartFrame + UInt64(frameOffset)
-                let standardSamples = spatialCoder.quantize(
-                    unscaledSamples: Array(unscaledElements[sampleStart..<sampleEnd])
-                )
-                let quantizedSamples = AtmosCompatibilityMatrix.transportSamples(
-                    standardSamples: standardSamples,
-                    channelCount: encodedChannelCount
-                )
-                let matrixTargets = spatialCoder.matrixRenderTargets(
-                    at: blockSourceFrame + UInt64(blockFrameCount / 2)
-                )
-                var samples = quantizedSamples
-                samples.append(
-                    contentsOf: repeatElement(
-                        0,
-                        count: (Self.samplesPerAccessUnit - blockFrameCount)
-                            * encodedChannelCount
+            let spatialWorkerCount = min(
+                max(1, ProcessInfo.processInfo.activeProcessorCount), spatialBlockCount
+            )
+            DispatchQueue.concurrentPerform(iterations: spatialWorkerCount) { worker in
+                for blockIndex in stride(
+                    from: worker, to: spatialBlockCount, by: spatialWorkerCount
+                ) {
+                    let frameOffset = blockIndex * Self.samplesPerAccessUnit
+                    let blockFrameCount = min(
+                        Self.samplesPerAccessUnit, requestedFrames - frameOffset
                     )
-                )
-                spatialStore.set(
-                    PreparedAtmosSpatialBlock(
-                        samples: samples,
-                        actualFrameCount: blockFrameCount,
-                        sourceFrame: blockSourceFrame,
-                        matrixRenderTargets: matrixTargets
-                    ),
-                    at: blockIndex
-                )
+                    let sampleStart = frameOffset * encodedChannelCount
+                    let sampleEnd = (frameOffset + blockFrameCount) * encodedChannelCount
+                    let blockSourceFrame = batchStartFrame + UInt64(frameOffset)
+                    let standardSamples = spatialCoder.quantize(
+                        unscaledSamples: Array(unscaledElements[sampleStart..<sampleEnd])
+                    )
+                    let quantizedSamples = AtmosCompatibilityMatrix.transportSamples(
+                        standardSamples: standardSamples,
+                        channelCount: encodedChannelCount
+                    )
+                    let renderCoefficients = spatialCoder.matrixRenderCoefficients(
+                        at: blockSourceFrame + UInt64(blockFrameCount / 2)
+                    )
+                    var samples = quantizedSamples
+                    samples.append(
+                        contentsOf: repeatElement(
+                            0,
+                            count: (Self.samplesPerAccessUnit - blockFrameCount)
+                                * encodedChannelCount
+                        )
+                    )
+                    spatialStore.set(
+                        PreparedAtmosSpatialBlock(
+                            samples: samples,
+                            actualFrameCount: blockFrameCount,
+                            sourceFrame: blockSourceFrame,
+                            matrixRenderCoefficients: renderCoefficients
+                        ),
+                        at: blockIndex
+                    )
+                }
             }
 
             var prepared = [PreparedAtmosAccessUnit]()
@@ -516,14 +637,18 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
 
                 let metadataEndFrame = spatialBlock.sourceFrame
                     + UInt64(spatialBlock.actualFrameCount)
-                let metadataPositions: [ADMPosition]?
+                let metadataUpdates: [AtmosMetadataUpdate]?
                 let metadataSampleOffset: Int
                 if nextMetadataSample < metadataEndFrame {
-                    metadataPositions = spatialCoder.positions(at: nextMetadataSample)
+                    metadataUpdates = try spatialCoder.metadataUpdates(
+                        frameStart: nextMetadataSample,
+                        programmeStart: sourceTiming.inputStartFrame,
+                        programmeEnd: inputEndFrame
+                    )
                     metadataSampleOffset = Int(nextMetadataSample - spatialBlock.sourceFrame)
                     nextMetadataSample += 1_536
                 } else {
-                    metadataPositions = nil
+                    metadataUpdates = nil
                     metadataSampleOffset = 0
                 }
 
@@ -536,7 +661,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                 prepared.append(
                     PreparedAtmosAccessUnit(
                         samples: spatialBlock.samples,
-                        metadataPositions: metadataPositions,
+                        metadataUpdates: metadataUpdates,
                         metadataSampleOffset: metadataSampleOffset,
                         actualFrameCount: spatialBlock.actualFrameCount,
                         frameIndex: frameIndex,
@@ -544,7 +669,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                         restartLosslessChecks: restartChecks,
                         restartNoiseGeneratorSeeds: restartNoiseGeneratorSeeds,
                         shortenBy: Self.samplesPerAccessUnit - spatialBlock.actualFrameCount,
-                        matrixRenderTargets: spatialBlock.matrixRenderTargets,
+                        matrixRenderCoefficients: spatialBlock.matrixRenderCoefficients,
                         highResolutionTiming: highResolutionTiming,
                         // The immersive presentation uses the 7.1 compatibility
                         // render as its broadband DRC sidechain. Object signals
@@ -556,7 +681,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                     &intervalLosslessChecks,
                     samples: spatialBlock.samples,
                     frameCount: spatialBlock.actualFrameCount,
-                    matrixRenderTargets: spatialBlock.matrixRenderTargets
+                    matrixRenderCoefficients: spatialBlock.matrixRenderCoefficients
                 )
                 sourceFrame = spatialBlock.sourceFrame + UInt64(spatialBlock.actualFrameCount)
                 frameIndex += 1
@@ -584,7 +709,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                     encoded.append(
                         self.makeAccessUnit(
                             samples: item.samples,
-                            metadataPositions: item.metadataPositions,
+                            metadataUpdates: item.metadataUpdates,
                             metadataSampleOffset: item.metadataSampleOffset,
                             actualFrameCount: item.actualFrameCount,
                             frameIndex: item.frameIndex,
@@ -592,7 +717,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                             restartLosslessChecks: item.restartLosslessChecks,
                             restartNoiseGeneratorSeeds: item.restartNoiseGeneratorSeeds,
                             shortenBy: item.shortenBy,
-                            matrixRenderTargets: item.matrixRenderTargets,
+                            matrixRenderCoefficients: item.matrixRenderCoefficients,
                             highResolutionTiming: item.highResolutionTiming,
                             drcUpdates: item.drcUpdates,
                             entropyState: &entropyState,
@@ -668,13 +793,14 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             firstFrameOfAction: sourceTiming.firstFrameOfAction,
             spatialClusterCount: spatialClusterCount,
             elementBitDepth: elementBitDepth,
-            drcProfile: drcProfile
+            drcProfile: drcProfile,
+            spatialAccuracy: spatialAccuracy
         )
     }
 
     private func makeAccessUnit(
         samples: [Int32],
-        metadataPositions: [ADMPosition]?,
+        metadataUpdates: [AtmosMetadataUpdate]?,
         metadataSampleOffset: Int,
         actualFrameCount: Int,
         frameIndex: UInt64,
@@ -682,7 +808,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         restartLosslessChecks: [UInt32],
         restartNoiseGeneratorSeeds: [UInt32],
         shortenBy: Int,
-        matrixRenderTargets: [[Int]],
+        matrixRenderCoefficients: [[Int32]],
         highResolutionTiming: Bool,
         drcUpdates: [Int?],
         entropyState: inout AtmosEntropyState,
@@ -710,7 +836,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                     frameInInterval: frameInInterval, restartFrame: restartFrame,
                     losslessCheck: restartLosslessChecks[0],
                     noiseGeneratorSeed: restartNoiseGeneratorSeeds[0], shortenBy: shortenBy,
-                    compatibilityStage: nil, matrixRenderTargets: nil,
+                    compatibilityStage: nil, matrixRenderCoefficients: nil,
                     highResolutionTiming: highResolutionTiming,
                     huffmanOffsets: &offsets, filterHistories: &filterHistories,
                     activeFIR: &activeFIR,
@@ -725,7 +851,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                     frameInInterval: frameInInterval, restartFrame: restartFrame,
                     losslessCheck: restartLosslessChecks[1],
                     noiseGeneratorSeed: restartNoiseGeneratorSeeds[1], shortenBy: shortenBy,
-                    compatibilityStage: .sixChannel, matrixRenderTargets: nil,
+                    compatibilityStage: .sixChannel, matrixRenderCoefficients: nil,
                     highResolutionTiming: highResolutionTiming,
                     huffmanOffsets: &offsets, filterHistories: &filterHistories,
                     activeFIR: &activeFIR,
@@ -740,7 +866,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                     frameInInterval: frameInInterval, restartFrame: restartFrame,
                     losslessCheck: restartLosslessChecks[2],
                     noiseGeneratorSeed: restartNoiseGeneratorSeeds[2], shortenBy: shortenBy,
-                    compatibilityStage: .eightChannel, matrixRenderTargets: nil,
+                    compatibilityStage: .eightChannel, matrixRenderCoefficients: nil,
                     highResolutionTiming: highResolutionTiming,
                     huffmanOffsets: &offsets, filterHistories: &filterHistories,
                     activeFIR: &activeFIR,
@@ -760,7 +886,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                     restartFrame: restartFrame, losslessCheck: restartLosslessChecks[3],
                     noiseGeneratorSeed: restartNoiseGeneratorSeeds[3],
                     shortenBy: shortenBy, compatibilityStage: nil,
-                    matrixRenderTargets: matrixRenderTargets,
+                    matrixRenderCoefficients: matrixRenderCoefficients,
                     highResolutionTiming: highResolutionTiming,
                     huffmanOffsets: &offsets, filterHistories: &filterHistories,
                     activeFIR: &activeFIR,
@@ -781,9 +907,15 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         entropyState.activeFIR = encodedSubstreams.map(\.activeFIR)
         let substreams = encodedSubstreams.map(\.bytes)
 
-        let pendingExtraData = metadataPositions.map {
+        let pendingExtraData = metadataUpdates.map { updates in
             AtmosMetadataWriter.prepareExtraData(
-                positions: $0,
+                updates: updates.map { update in
+                    AtmosMetadataUpdate(
+                        blockOffsetFactor: update.blockOffsetFactor,
+                        rampDuration: update.rampDuration,
+                        positions: oamdSignalPositionIndices.map { update.positions[$0] }
+                    )
+                },
                 sampleOffset: metadataSampleOffset
             )
         }
@@ -910,6 +1042,29 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         2, 10, 7, 8, 3, 0, 4, 5, 9, 11, 12, 13, 14, 15, 6, 1
     ]
 
+    /// OAMD object-metadata blocks address decoded output channels in
+    /// ascending order, while the spatial coder lists positions in its matrix
+    /// layout (LFE, L, R, C, Lb, Rb, Ls, Rs, then clusters). Decoded outputs
+    /// receive matrix channels through the canonical ch_assign permutation,
+    /// so each output channel's declared position must be looked up through
+    /// that permutation. Writing the matrix-ordered list directly attaches
+    /// every position to the wrong signal and scrambles the object render.
+    static func oamdPositionOrder(elementCount: Int) -> [Int] {
+        precondition(AtmosSpatialCoder.supportedElementCounts.contains(elementCount))
+        // Matrix channels 0...7 recover L, Rb, Lb, R, C, LFE, Ls, Rs, which
+        // sit at these indices of the spatial coder's position list.
+        let matrixPositionIndex = [1, 5, 4, 2, 3, 0, 6, 7]
+        let assignments = canonical16ChannelAssignments.filter { $0 < elementCount }
+        var order = [Int](repeating: 0, count: elementCount)
+        for (matrixChannel, outputChannel) in assignments.enumerated() {
+            order[outputChannel] = matrixChannel < matrixPositionIndex.count
+                ? matrixPositionIndex[matrixChannel]
+                : matrixChannel
+        }
+        precondition(order[0] == 0, "The LFE bed element must remain the first OAMD signal")
+        return order
+    }
+
     /// TrueHD stores peak data rate in 3 kbps units at 48 kHz. The value is a
     /// ceiling: rounding down can declare a rate lower than an emitted AU.
     static func codedPeakRate(_ bitRate: Int) -> Int {
@@ -1016,7 +1171,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         noiseGeneratorSeed: UInt32,
         shortenBy: Int,
         compatibilityStage: AtmosCompatibilityStage?,
-        matrixRenderTargets: [[Int]]?,
+        matrixRenderCoefficients: [[Int32]]?,
         highResolutionTiming: Bool,
         huffmanOffsets: inout [Int32],
         filterHistories: inout [[Int32]],
@@ -1044,7 +1199,8 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                 to: &writer, samples: samples, frameRange: 0..<8,
                 minimumChannel: minimumChannel, maximumChannel: maximumChannel,
                 compatibilityStage: compatibilityStage,
-                matrixRenderTargets: matrixRenderTargets,
+                matrixRenderCoefficients: matrixRenderCoefficients,
+                matrixHasNewConfiguration: matrixRenderCoefficients != nil,
                 outputShift: decodedOutputShift,
                 huffmanOffsets: &huffmanOffsets,
                 filterHistories: &filterHistories, activeFIR: &activeFIR,
@@ -1059,7 +1215,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                 to: &writer, samples: samples, frameRange: 8..<40,
                 minimumChannel: minimumChannel, maximumChannel: maximumChannel,
                 compatibilityStage: nil,
-                matrixRenderTargets: nil,
+                matrixRenderCoefficients: nil,
                 huffmanOffsets: &huffmanOffsets,
                 filterHistories: &filterHistories, activeFIR: &activeFIR,
                 allowPrediction: true,
@@ -1074,11 +1230,12 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                 to: &writer, samples: samples, frameRange: 0..<40,
                 minimumChannel: minimumChannel, maximumChannel: maximumChannel,
                 compatibilityStage: nil,
-                // FBA matrix configurations persist until explicitly replaced.
-                // Emitting `new configuration` in every ordinary AU exhausts
-                // strict decoders' configuration state; refresh it only in the
-                // first block of a restart AU and inherit it here.
-                matrixRenderTargets: nil,
+                // Reuse the persistent row/mask configuration while replacing
+                // only its coefficients. This is the FBA path intended for a
+                // time-varying Object downmix and does not consume another
+                // strict-decoder configuration slot on every access unit.
+                matrixRenderCoefficients: matrixRenderCoefficients,
+                matrixHasNewConfiguration: false,
                 huffmanOffsets: &huffmanOffsets,
                 filterHistories: &filterHistories, activeFIR: &activeFIR,
                 allowPrediction: true,
@@ -1148,7 +1305,8 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         minimumChannel: Int,
         maximumChannel: Int,
         compatibilityStage: AtmosCompatibilityStage?,
-        matrixRenderTargets: [[Int]]?,
+        matrixRenderCoefficients: [[Int32]]?,
+        matrixHasNewConfiguration: Bool = false,
         outputShift: Int? = nil,
         huffmanOffsets: inout [Int32],
         filterHistories: inout [[Int32]],
@@ -1194,9 +1352,13 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         if let compatibilityStage {
             writer.write(1, count: 1)
             writeCompatibilityMatrix(to: &writer, stage: compatibilityStage)
-        } else if let matrixRenderTargets {
+        } else if let matrixRenderCoefficients {
             writer.write(1, count: 1)
-            writeAtmosMatrix(to: &writer, renderTargets: matrixRenderTargets)
+            writeAtmosMatrix(
+                to: &writer,
+                renderCoefficients: matrixRenderCoefficients,
+                newConfiguration: matrixHasNewConfiguration
+            )
         } else {
             writer.write(0, count: 1)
         }
@@ -1263,29 +1425,31 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         }
     }
 
-    private func writeAtmosMatrix(to writer: inout BitWriter, renderTargets: [[Int]]) {
+    private func writeAtmosMatrix(
+        to writer: inout BitWriter,
+        renderCoefficients: [[Int32]],
+        newConfiguration: Bool
+    ) {
         let matrixRows = AtmosCompatibilityMatrix.immersiveRows(
             channelCount: encodedChannelCount,
-            matrixRenderTargets: renderTargets
+            renderCoefficients: renderCoefficients
         )
         writer.write(1, count: 1) // new matrix
-        writer.write(1, count: 1) // new configuration
-        writer.write(UInt64(matrixRows.count - 1), count: 4)
-        for row in matrixRows {
-            var mask: UInt16 = 0
-            for (channel, coefficient) in row.coefficients.enumerated()
-                where coefficient != 0 {
-                mask |= 1 << UInt16(channel)
+        writer.write(newConfiguration ? 1 : 0, count: 1)
+        if newConfiguration {
+            writer.write(UInt64(matrixRows.count - 1), count: 4)
+            for row in matrixRows {
+                writer.write(UInt64(row.outputChannel), count: 4)
+                writer.write(UInt64(AtmosCompatibilityMatrix.fractionalBits), count: 4)
+                writer.write(1, count: 3) // coefficient shift zero, encoded with a +1 bias
+                writer.write(0, count: 2) // no bypassed LSBs
+                writer.write(0, count: 4) // no dither
+                writer.write(UInt64(row.coefficientMask), count: encodedChannelCount)
             }
-            writer.write(UInt64(row.outputChannel), count: 4)
-            writer.write(UInt64(AtmosCompatibilityMatrix.fractionalBits), count: 4)
-            writer.write(1, count: 3) // coefficient shift zero, encoded with a +1 bias
-            writer.write(0, count: 2) // no bypassed LSBs
-            writer.write(0, count: 4) // no dither
-            writer.write(UInt64(mask), count: encodedChannelCount)
         }
         for row in matrixRows {
-            for coefficient in row.coefficients where coefficient != 0 {
+            for (channel, coefficient) in row.coefficients.enumerated()
+                where row.coefficientMask & (1 << UInt16(channel)) != 0 {
                 writer.writeSigned(
                     coefficient,
                     count: AtmosCompatibilityMatrix.fractionalBits + 2
@@ -1316,7 +1480,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         _ checks: inout [UInt32],
         samples: [Int32],
         frameCount: Int,
-        matrixRenderTargets: [[Int]]
+        matrixRenderCoefficients: [[Int32]]
     ) {
         for frame in 0..<frameCount {
             let base = frame * encodedChannelCount
@@ -1336,7 +1500,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
 
             let matrixOutput = AtmosCompatibilityMatrix.immersiveOutput(
                 transport,
-                matrixRenderTargets: matrixRenderTargets
+                renderCoefficients: matrixRenderCoefficients
             )
             for channel in 0..<encodedChannelCount {
                 let decoded = matrixOutput[channel] &<< decodedOutputShift

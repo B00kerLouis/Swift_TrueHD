@@ -197,7 +197,8 @@ final class TrueHDBitstreamEncoder {
             firstFrameOfAction: firstFrameOfAction,
             spatialClusterCount: 0,
             elementBitDepth: reader.format.bitsPerSample,
-            drcProfile: drcProfile
+            drcProfile: drcProfile,
+            spatialAccuracy: nil
         )
     }
 

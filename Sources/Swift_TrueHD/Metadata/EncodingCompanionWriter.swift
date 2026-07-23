@@ -32,6 +32,25 @@ enum EncodingCompanionWriter {
         let averageRate = duration > 0
             ? Double(result.outputByteCount) * 8 / duration
             : 0
+        let spatialAnalysis: String
+        if let accuracy = result.spatialAccuracy {
+            let spatialElementCount = max(0, result.spatialClusterCount - 8)
+            spatialAnalysis = """
+
+        Spatial approximation
+          Available spatial elements: \(spatialElementCount)
+          Metadata intervals: \(accuracy.intervalCount)
+          Maximum active spatial sources: \(accuracy.maximumActiveSpatialSources)
+          Grouped intervals: \(accuracy.groupedIntervalCount)
+          Source-interval observations: \(accuracy.sourceIntervalCount)
+          Exact before OAMD quantization: \(accuracy.exactlyRepresentedSourceIntervals)
+          Continuous-source assignment changes: \(accuracy.assignmentChangeCount)
+          Maximum quantized XYZ deviation: \(String(format: "%.8f", accuracy.maximumQuantizedPositionError))
+          Energy-weighted RMS quantized XYZ deviation: \(String(format: "%.8f", accuracy.energyWeightedRMSQuantizedPositionError))
+        """
+        } else {
+            spatialAnalysis = ""
+        }
         let log = """
         Swift TrueHD Encode Log
 
@@ -58,6 +77,7 @@ enum EncodingCompanionWriter {
           Element bit depth: \(result.elementBitDepth)
           Restart interval: \(restartInterval(result.profile))
           Peak bit rate limit: \(TrueHDCompliancePolicy.peakBitRate) bits/second
+        \(spatialAnalysis)
 
         Output
           File: \(result.outputURL.path)
@@ -84,7 +104,7 @@ enum EncodingCompanionWriter {
         encoderName: String
     ) -> Data {
         let root = XMLElement(name: "encode")
-        root.addAttribute(XMLNode.attribute(withName: "version", stringValue: "2") as! XMLNode)
+        root.addAttribute(XMLNode.attribute(withName: "version", stringValue: "3") as! XMLNode)
         root.addAttribute(
             XMLNode.attribute(withName: "generator", stringValue: encoderName) as! XMLNode
         )
@@ -110,6 +130,38 @@ enum EncodingCompanionWriter {
         compliance.addChild(element("restart-interval", String(restartInterval(result.profile))))
         compliance.addChild(element("peak-bit-rate", String(TrueHDCompliancePolicy.peakBitRate)))
         root.addChild(compliance)
+
+        if let accuracy = result.spatialAccuracy {
+            let spatial = XMLElement(name: "spatial-accuracy")
+            spatial.addChild(element(
+                "available-spatial-elements",
+                String(max(0, result.spatialClusterCount - 8))
+            ))
+            spatial.addChild(element("metadata-intervals", String(accuracy.intervalCount)))
+            spatial.addChild(element(
+                "maximum-active-spatial-sources",
+                String(accuracy.maximumActiveSpatialSources)
+            ))
+            spatial.addChild(element("grouped-intervals", String(accuracy.groupedIntervalCount)))
+            spatial.addChild(element("source-intervals", String(accuracy.sourceIntervalCount)))
+            spatial.addChild(element(
+                "exact-before-oamd-quantization",
+                String(accuracy.exactlyRepresentedSourceIntervals)
+            ))
+            spatial.addChild(element(
+                "continuous-source-assignment-changes",
+                String(accuracy.assignmentChangeCount)
+            ))
+            spatial.addChild(element(
+                "maximum-quantized-xyz-deviation",
+                String(format: "%.8f", accuracy.maximumQuantizedPositionError)
+            ))
+            spatial.addChild(element(
+                "energy-weighted-rms-quantized-xyz-deviation",
+                String(format: "%.8f", accuracy.energyWeightedRMSQuantizedPositionError)
+            ))
+            root.addChild(spatial)
+        }
 
         let presentations = XMLElement(name: "presentations")
         let counts = result.profile == .atmos ? [2, 6, 8, result.channelCount] : [2, 6, 8]

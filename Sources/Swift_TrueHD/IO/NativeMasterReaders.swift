@@ -14,9 +14,12 @@ enum NativeMasterReader {
             return try WaveFileReader(url: resolved)
         case "atmos":
             let descriptor = try DAMFDescriptor(manifestURL: resolved)
+            // Probe the CAF before resolving whether manifest IDs describe a
+            // packed persistent-ID list or sparse physical channel slots.
+            let probe = try CAFFileReader(url: descriptor.audioURL)
             return try CAFFileReader(
                 url: descriptor.audioURL,
-                admMetadata: descriptor.metadata,
+                admMetadata: descriptor.metadata(channelCount: probe.format.channelCount),
                 sourceFrameRate: descriptor.frameRate
             )
         case "mxf":
@@ -234,13 +237,23 @@ final class CAFFileReader: TrueHDAudioReader {
 }
 
 private struct DAMFDescriptor {
+    private struct PositionEvent {
+        let sample: UInt64
+        let position: ADMPosition
+        let rampLength: UInt64
+    }
+
     let audioURL: URL
-    let metadata: ADMMetadata
+    private let positions: [Int: [PositionEvent]]
+    private let bedChannelLabelsByID: [Int: String]
+    private let objectIDs: [Int]
+    private let ffoa: Double
     let frameRate: TrueHDFrameRate
 
     init(manifestURL: URL) throws {
         let text = try String(contentsOf: manifestURL, encoding: .utf8)
         var audioName: String?
+        var metadataName: String?
         var fps: Double?
         var ffoa = 0.0
         var inBed = false
@@ -253,6 +266,9 @@ private struct DAMFDescriptor {
             let value = String(line).trimmingCharacters(in: .whitespaces)
             if value.hasPrefix("audio:") {
                 audioName = value.dropFirst("audio:".count).trimmingCharacters(in: .whitespaces)
+            } else if value.hasPrefix("metadata:") {
+                metadataName = value.dropFirst("metadata:".count)
+                    .trimmingCharacters(in: .whitespaces)
             } else if value.hasPrefix("fps:") {
                 fps = Double(value.dropFirst("fps:".count).trimmingCharacters(in: .whitespaces))
             } else if value.hasPrefix("ffoa:") {
@@ -291,19 +307,14 @@ private struct DAMFDescriptor {
             throw TrueHDError.invalidWaveFile("DAMF audio file is missing: \(audioURL.path)")
         }
         let frameRate = try Self.frameRate(from: fps)
-        let metadataURL = manifestURL.deletingLastPathComponent()
-            .appendingPathComponent(manifestURL.deletingPathExtension().lastPathComponent + ".atmos.metadata")
+        let metadataURL = manifestURL.deletingLastPathComponent().appendingPathComponent(
+            metadataName ?? (manifestURL.deletingPathExtension().lastPathComponent + ".atmos.metadata")
+        )
         let metadataText = try String(contentsOf: metadataURL, encoding: .utf8)
         let sampleRate = Self.sampleRate(from: metadataText) ?? 48_000
         let positions = Self.positions(from: metadataText, sampleRate: sampleRate)
-        // DAMF object IDs are persistent identifiers, not PCM channel indexes.
-        // Active objects can have gaps in their IDs while the CAF channels are
-        // packed contiguously in manifest order.
-        let bedIDs = bedChannelLabelsByID.keys.sorted()
-        let trackIDs = bedIDs + objectIDs
-        let objectIDSet = Set(objectIDs)
-        var channels = [ADMChannelMetadata]()
-        channels.reserveCapacity(trackIDs.count)
+        // Validate the required Bed labels before the CAF channel count is
+        // available to resolve packed persistent IDs versus physical slots.
         let bedFormatByLabel = [
             "L": "AC_00011001", "R": "AC_00011002", "C": "AC_00011003",
             "LFE": "AC_00011004", "Lss": "AC_00011005", "Rss": "AC_00011006",
@@ -316,32 +327,81 @@ private struct DAMFDescriptor {
                 "DAMF manifest does not describe all ten Bed channel labels"
             )
         }
-        for sourceID in trackIDs {
+        self.audioURL = audioURL
+        self.positions = positions
+        self.bedChannelLabelsByID = bedChannelLabelsByID
+        self.objectIDs = objectIDs
+        self.ffoa = ffoa
+        self.frameRate = frameRate
+    }
+
+    func metadata(channelCount: Int) throws -> ADMMetadata {
+        guard channelCount > 0 else {
+            throw TrueHDError.invalidWaveFile("DAMF CAF has no PCM channels")
+        }
+        let bedFormatByLabel = [
+            "L": "AC_00011001", "R": "AC_00011002", "C": "AC_00011003",
+            "LFE": "AC_00011004", "Lss": "AC_00011005", "Rss": "AC_00011006",
+            "Lrs": "AC_00011007", "Rrs": "AC_00011008", "Lts": "AC_00011009",
+            "Rts": "AC_0001100a"
+        ]
+        let bedIDs = bedChannelLabelsByID.keys.sorted()
+        let trackIDs = bedIDs + objectIDs
+        guard Set(trackIDs).count == trackIDs.count else {
+            throw TrueHDError.invalidWaveFile("DAMF reuses a source ID")
+        }
+        guard trackIDs.count <= channelCount else {
+            throw TrueHDError.invalidWaveFile(
+                "DAMF describes \(trackIDs.count) sources for \(channelCount) CAF channels"
+            )
+        }
+
+        let sourceIDByChannel: [Int?]
+        if trackIDs.count == channelCount {
+            // DAMF IDs are normally persistent identifiers. The CAF stores the
+            // corresponding sources contiguously in Bed/object manifest order.
+            sourceIDByChannel = trackIDs.map(Optional.some)
+        } else {
+            // Some producers preserve a larger physical CAF slot array. This
+            // representation is only unambiguous when every declared ID fits
+            // directly in that array; otherwise the manifest is inconsistent.
+            guard trackIDs.allSatisfy({ (0..<channelCount).contains($0) }) else {
+                throw TrueHDError.invalidWaveFile(
+                    "DAMF source IDs cannot be mapped to the CAF channel array"
+                )
+            }
+            var physicalSlots = [Int?](repeating: nil, count: channelCount)
+            for sourceID in trackIDs { physicalSlots[sourceID] = sourceID }
+            sourceIDByChannel = physicalSlots
+        }
+
+        let objectIDSet = Set(objectIDs)
+        var channels = [ADMChannelMetadata]()
+        channels.reserveCapacity(channelCount)
+        for (channel, sourceID) in sourceIDByChannel.enumerated() {
+            let label = sourceID.flatMap { bedChannelLabelsByID[$0] }
+            let isObject = sourceID.map(objectIDSet.contains) ?? false
             let formatID: String
-            if let label = bedChannelLabelsByID[sourceID] {
+            if let label {
                 guard let mapped = bedFormatByLabel[label] else {
                     throw TrueHDError.invalidWaveFile(
                         "DAMF manifest contains unsupported Bed label: \(label)"
                     )
                 }
                 formatID = mapped
-            } else {
+            } else if let sourceID {
                 formatID = String(format: "AC_0003%04x", sourceID + 1)
+            } else {
+                formatID = String(format: "AC_0003%04x", channel + 1)
             }
-            let blocks = Self.makeBlocks(positions[sourceID] ?? [])
             channels.append(ADMChannelMetadata(
                 channelFormatID: formatID,
-                isObject: objectIDSet.contains(sourceID),
-                blocks: blocks,
-                isPresent: true
+                isObject: isObject,
+                blocks: Self.makeBlocks(sourceID.flatMap { positions[$0] } ?? []),
+                isPresent: sourceID != nil
             ))
         }
-        // DAMF stores FFOA as an absolute timeline value in seconds. For
-        // example, `ffoa: 3600` denotes 01:00:00:00; adding another hour here
-        // makes a valid default FFOA appear to precede the programme start.
-        metadata = ADMMetadata(channels: channels, programmeStartSeconds: ffoa)
-        self.audioURL = audioURL
-        self.frameRate = frameRate
+        return ADMMetadata(channels: channels, programmeStartSeconds: ffoa)
     }
 
     private static func frameRate(from value: Double?) throws -> TrueHDFrameRate {
@@ -363,14 +423,19 @@ private struct DAMFDescriptor {
         return nil
     }
 
-    private static func positions(from text: String, sampleRate: Int) -> [Int: [(UInt64, ADMPosition)]] {
-        var result = [Int: [(UInt64, ADMPosition)]]()
+    private static func positions(from text: String, sampleRate: Int) -> [Int: [PositionEvent]] {
+        var result = [Int: [PositionEvent]]()
         var currentID: Int?
         var currentSample: UInt64 = 0
         var currentPosition: ADMPosition?
+        var currentRampLength: UInt64 = 0
         func flush() {
             guard let currentID, let currentPosition else { return }
-            result[currentID, default: []].append((currentSample, currentPosition))
+            result[currentID, default: []].append(PositionEvent(
+                sample: currentSample,
+                position: currentPosition,
+                rampLength: currentRampLength
+            ))
         }
         for rawLine in text.split(whereSeparator: { $0.isNewline }) {
             let line = String(rawLine).trimmingCharacters(in: .whitespaces)
@@ -378,8 +443,12 @@ private struct DAMFDescriptor {
                 flush()
                 let number = line.split(separator: ":", maxSplits: 1)[1]
                 currentID = Int(number.trimmingCharacters(in: .whitespaces))
-                currentSample = 0
+                // DAMF emits samplePos once for a metadata instant and then
+                // lists the remaining Object IDs with the same inherited
+                // timestamp. Resetting here collapses those updates onto
+                // sample zero and destroys the original frame trajectory.
                 currentPosition = nil
+                currentRampLength = 0
             } else if line.hasPrefix("samplePos:") {
                 currentSample = UInt64(line.split(separator: ":", maxSplits: 1)[1].trimmingCharacters(in: .whitespaces)) ?? 0
             } else if line.hasPrefix("pos:") {
@@ -390,6 +459,11 @@ private struct DAMFDescriptor {
                 if values.count == 3 {
                     currentPosition = ADMPosition(x: values[0], y: values[1], z: values[2]).clamped()
                 }
+            } else if line.hasPrefix("rampLength:") {
+                currentRampLength = UInt64(
+                    line.split(separator: ":", maxSplits: 1)[1]
+                        .trimmingCharacters(in: .whitespaces)
+                ) ?? 0
             }
         }
         flush()
@@ -397,15 +471,69 @@ private struct DAMFDescriptor {
         return result
     }
 
-    private static func makeBlocks(_ values: [(UInt64, ADMPosition)]) -> [ADMPositionBlock] {
-        let sorted = values.sorted { $0.0 < $1.0 }
-        return sorted.enumerated().map { index, item in
+    private static func makeBlocks(
+        _ values: [PositionEvent]
+    ) -> [ADMPositionBlock] {
+        let sorted = values.sorted { $0.sample < $1.sample }
+        guard let first = sorted.first else { return [] }
+        var keyframes: [(UInt64, ADMPosition, Bool)] = [
+            (first.sample, first.position, false)
+        ]
+        for event in sorted.dropFirst() {
+            if event.rampLength > 0, event.sample <= UInt64.max - event.rampLength {
+                let previous = keyframes.last!.1
+                if keyframes.last!.0 == event.sample {
+                    keyframes[keyframes.count - 1] = (event.sample, previous, true)
+                } else {
+                    keyframes.append((event.sample, previous, true))
+                }
+                keyframes.append((event.sample + event.rampLength, event.position, false))
+            } else if keyframes.last!.0 == event.sample {
+                keyframes[keyframes.count - 1] = (event.sample, event.position, false)
+            } else {
+                // A zero ramp is an instantaneous state update, followed by a
+                // hold until this Object's next event.
+                keyframes.append((event.sample, event.position, false))
+            }
+        }
+        return keyframes.enumerated().map { index, item in
             ADMPositionBlock(
                 startFrame: item.0,
-                endFrame: index + 1 < sorted.count ? sorted[index + 1].0 : .max,
-                position: item.1
+                endFrame: index + 1 < keyframes.count ? keyframes[index + 1].0 : .max,
+                position: item.1,
+                interpolatesToNext: item.2
             )
         }
+    }
+}
+
+enum IABPositionConverter {
+    private static let minimumXYCode: UInt64 = 32_767
+    private static let maximumCode: UInt64 = 65_535
+
+    static func admPosition(
+        iabX: UInt64,
+        iabY: UInt64,
+        iabZ: UInt64
+    ) throws -> ADMPosition {
+        guard (minimumXYCode...maximumCode).contains(iabX),
+              (minimumXYCode...maximumCode).contains(iabY),
+              iabZ <= maximumCode else {
+            throw TrueHDError.malformedBitstream(
+                "IAB object position is outside the ST 2098-2 coordinate code range"
+            )
+        }
+
+        // ST 2098-2 uses a [0, 1] unit cube with X increasing left-to-right
+        // and Y increasing front-to-rear. The encoder's ADM Cartesian space is
+        // [-1, 1], with positive Y toward the front and Z already in [0, 1].
+        let relativeX = Double(iabX - minimumXYCode) / 32_768.0
+        let relativeY = Double(iabY - minimumXYCode) / 32_768.0
+        return ADMPosition(
+            x: relativeX * 2 - 1,
+            y: 1 - relativeY * 2,
+            z: Double(iabZ) / Double(maximumCode)
+        )
     }
 }
 
@@ -425,6 +553,7 @@ private final class MXFIABReader: TrueHDAudioReader {
     private let handle: FileHandle
     private let frames: [FrameDescriptor]
     private let samplesPerFrame: Int
+    private let objectChannelByMetaID: [Int: Int]
     private var currentSample: UInt64 = 0
     private var cachedFrameIndex: Int?
     private var cachedSamples: [Int32] = []
@@ -471,25 +600,26 @@ private final class MXFIABReader: TrueHDAudioReader {
         )
         frameCount = UInt64(parsedFrames.count * samplesPerFrame)
         sourceFrameRate = firstInfo.frameRate
-        let objectTrackCount = firstInfo.objects.count
-        guard objectTrackCount <= 118 else {
-            throw Self.malformed("IAB contains more than 118 object tracks")
-        }
-
         var positions = Array(repeating: [(UInt64, ADMPosition)](), count: 128)
         var presentBedChannelIDs = Set(firstInfo.bedChannelIDs)
+        var objectSlotByMetaID = [Int: Int]()
         for (index, frame) in parsedFrames.enumerated() {
             let bytes = try Self.readExactly(handle, offset: frame.offset, count: frame.length)
             let info = try Self.parseFrame(bytes, collectPCM: false)
-            guard info.objects.count == objectTrackCount else {
-                throw Self.malformed(
-                    "Dolby IMF IAB object count changes between IAFrames"
-                )
-            }
             presentBedChannelIDs.formUnion(info.bedChannelIDs)
             let sampleStart = UInt64(index * samplesPerFrame)
-            for (objectIndex, object) in info.objects.enumerated() {
-                let channel = 10 + objectIndex
+            for object in info.objects {
+                let slot: Int
+                if let existing = objectSlotByMetaID[object.metaID] {
+                    slot = existing
+                } else {
+                    slot = objectSlotByMetaID.count
+                    guard slot < 118 else {
+                        throw Self.malformed("IAB contains more than 118 persistent object tracks")
+                    }
+                    objectSlotByMetaID[object.metaID] = slot
+                }
+                let channel = 10 + slot
                 for update in object.panUpdates {
                     let updateFrame = sampleStart + UInt64(update.sampleOffset)
                     if positions[channel].last?.1 != update.position {
@@ -498,6 +628,7 @@ private final class MXFIABReader: TrueHDAudioReader {
                 }
             }
         }
+        objectChannelByMetaID = objectSlotByMetaID.mapValues { 10 + $0 }
         var channels = [ADMChannelMetadata]()
         let bedIDs = [
             "AC_00011001", "AC_00011002", "AC_00011003", "AC_00011004",
@@ -511,10 +642,12 @@ private final class MXFIABReader: TrueHDAudioReader {
                     ? bedIDs[index]
                     : String(format: "AC_0003%04x", index - 9),
                 isObject: index >= bedIDs.count,
+                // PanInfoExists=0 explicitly retains the preceding IAB state;
+                // only transmitted sub-blocks create new position keyframes.
                 blocks: Self.makeBlocks(positions[index]),
                 isPresent: index < bedIDs.count
                     ? presentBedChannelIDs.contains(iabBedChannelIDs[index])
-                    : index < bedIDs.count + objectTrackCount
+                    : index < bedIDs.count + objectSlotByMetaID.count
             ))
         }
         admMetadata = ADMMetadata(channels: channels, programmeStartSeconds: 3_600)
@@ -535,7 +668,11 @@ private final class MXFIABReader: TrueHDAudioReader {
             if cachedFrameIndex != frameIndex {
                 let descriptor = frames[frameIndex]
                 let bytes = try Self.readExactly(handle, offset: descriptor.offset, count: descriptor.length)
-                cachedSamples = try Self.parseFrame(bytes, collectPCM: true).samples
+                let info = try Self.parseFrame(bytes, collectPCM: true)
+                cachedSamples = try Self.interleavedSamples(
+                    from: info,
+                    objectChannelByMetaID: objectChannelByMetaID
+                )
                 cachedFrameIndex = frameIndex
             }
             let take = min(remaining, samplesPerFrame - offsetInFrame)
@@ -561,9 +698,11 @@ private final class MXFIABReader: TrueHDAudioReader {
         let bitDepth: Int
         let sampleCount: Int
         let frameRate: TrueHDFrameRate?
-        let samples: [Int32]
+        let samples: [Int: [Int32]]
         let objects: [IABObject]
-        let bedChannelIDs: [Int]
+        let bedMap: [(channelID: Int, audioID: Int, gain: Double)]
+
+        var bedChannelIDs: [Int] { bedMap.map(\.channelID) }
     }
 
     private struct IABPanUpdate {
@@ -672,35 +811,39 @@ private final class MXFIABReader: TrueHDAudioReader {
                 break
             }
         }
-        guard collectPCM else {
-            return FrameInfo(
-                sampleRate: sampleRate, bitDepth: bitDepth, sampleCount: sampleCount,
-                frameRate: frameRate(from: frameRateCode), samples: [],
-                objects: objects, bedChannelIDs: bedMap.map(\.channelID)
-            )
-        }
-        var output = [Int32](repeating: 0, count: sampleCount * 128)
-        let bedIndexByChannelID: [Int: Int] = [0: 0, 4: 1, 2: 2, 0xD: 3, 5: 4, 9: 5, 7: 6, 8: 7, 0xB: 8, 0xC: 9]
-        for item in bedMap {
-            guard let channel = bedIndexByChannelID[item.channelID], let source = samplesByID[item.audioID] else { continue }
-            copy(
-                source: source, to: &output, channel: channel,
-                sampleCount: sampleCount, gain: item.gain
-            )
-        }
-        for (objectIndex, object) in objects.enumerated() {
-            let channel = 10 + objectIndex
-            guard channel < 128, let source = samplesByID[object.audioID] else { continue }
-            copy(
-                source: source, to: &output, channel: channel,
-                sampleCount: sampleCount, panUpdates: object.panUpdates
-            )
-        }
         return FrameInfo(
             sampleRate: sampleRate, bitDepth: bitDepth, sampleCount: sampleCount,
-            frameRate: frameRate(from: frameRateCode), samples: output,
-            objects: objects, bedChannelIDs: bedMap.map(\.channelID)
+            frameRate: frameRate(from: frameRateCode), samples: collectPCM ? samplesByID : [:],
+            objects: objects, bedMap: bedMap
         )
+    }
+
+    private static func interleavedSamples(
+        from info: FrameInfo,
+        objectChannelByMetaID: [Int: Int]
+    ) throws -> [Int32] {
+        var output = [Int32](repeating: 0, count: info.sampleCount * 128)
+        let bedIndexByChannelID: [Int: Int] = [
+            0: 0, 4: 1, 2: 2, 0xD: 3, 5: 4,
+            9: 5, 7: 6, 8: 7, 0xB: 8, 0xC: 9
+        ]
+        for item in info.bedMap {
+            guard let channel = bedIndexByChannelID[item.channelID],
+                  let source = info.samples[item.audioID] else { continue }
+            copy(
+                source: source, to: &output, channel: channel,
+                sampleCount: info.sampleCount, gain: item.gain
+            )
+        }
+        for object in info.objects {
+            guard let channel = objectChannelByMetaID[object.metaID],
+                  let source = info.samples[object.audioID] else { continue }
+            copy(
+                source: source, to: &output, channel: channel,
+                sampleCount: info.sampleCount, panUpdates: object.panUpdates
+            )
+        }
+        return output
     }
 
     private static func parseBed(
@@ -756,7 +899,9 @@ private final class MXFIABReader: TrueHDAudioReader {
             updates.append(
                 IABPanUpdate(
                     sampleOffset: sampleOffsets[block],
-                    position: admPosition(iabX: x, iabY: y, iabZ: z),
+                    position: try IABPositionConverter.admPosition(
+                        iabX: x, iabY: y, iabZ: z
+                    ),
                     gain: gain(prefix: gainPrefix, code: gainCode)
                 )
             )
@@ -880,26 +1025,6 @@ private final class MXFIABReader: TrueHDAudioReader {
         switch code { case 0: return .fps24; case 1: return .fps25; case 2: return .fps30; case 9: return .fps23976; default: return nil }
     }
 
-    private static func relativeXY(_ value: UInt64) -> Double {
-        Double(value) / 32_768.0 - (32_767.0 / 32_768.0)
-    }
-
-    private static func relativeZ(_ value: UInt64) -> Double { Double(value) / 65_535.0 }
-
-    private static func admPosition(
-        iabX: UInt64,
-        iabY: UInt64,
-        iabZ: UInt64
-    ) -> ADMPosition {
-        let x = relativeXY(iabX)
-        let y = relativeXY(iabY)
-        return ADMPosition(
-            x: x * 2 - 1,
-            y: 1 - y * 2,
-            z: relativeZ(iabZ)
-        ).clamped()
-    }
-
     private static func gain(prefix: UInt64, code: UInt64?) -> Double {
         switch prefix {
         case 0: return 1
@@ -917,10 +1042,18 @@ private final class MXFIABReader: TrueHDAudioReader {
         return Int32(max(Double(Int32.min), min(Double(Int32.max), value)))
     }
 
-    private static func makeBlocks(_ values: [(UInt64, ADMPosition)]) -> [ADMPositionBlock] {
+    private static func makeBlocks(
+        _ values: [(UInt64, ADMPosition)],
+        interpolate: Bool = false
+    ) -> [ADMPositionBlock] {
         let sorted = values.sorted { $0.0 < $1.0 }
         return sorted.enumerated().map { index, item in
-            ADMPositionBlock(startFrame: item.0, endFrame: index + 1 < sorted.count ? sorted[index + 1].0 : .max, position: item.1)
+            ADMPositionBlock(
+                startFrame: item.0,
+                endFrame: index + 1 < sorted.count ? sorted[index + 1].0 : .max,
+                position: item.1,
+                interpolatesToNext: interpolate
+            )
         }
     }
 

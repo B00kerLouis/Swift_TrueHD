@@ -6,6 +6,21 @@
 import CryptoKit
 import Foundation
 
+struct AtmosMetadataUpdate: Sendable {
+    let blockOffsetFactor: Int
+    let rampDuration: Int
+    let positions: [ADMPosition]
+
+    init(blockOffsetFactor: Int, rampDuration: Int, positions: [ADMPosition]) {
+        precondition((0...63).contains(blockOffsetFactor))
+        precondition((0...2_047).contains(rampDuration))
+        precondition(AtmosSpatialCoder.supportedElementCounts.contains(positions.count))
+        self.blockOffsetFactor = blockOffsetFactor
+        self.rampDuration = rampDuration
+        self.positions = positions
+    }
+}
+
 enum AtmosMetadataWriter {
     struct PendingExtraData {
         fileprivate let oamd: [UInt8]
@@ -42,8 +57,23 @@ enum AtmosMetadataWriter {
         positions: [ADMPosition],
         sampleOffset: Int = 0
     ) -> PendingExtraData {
-        precondition(AtmosSpatialCoder.supportedElementCounts.contains(positions.count))
-        let oamd = makeOAMDPayload(positions: positions, sampleOffset: sampleOffset)
+        prepareExtraData(
+            updates: [
+                AtmosMetadataUpdate(
+                    blockOffsetFactor: 0,
+                    rampDuration: 1_536,
+                    positions: positions
+                )
+            ],
+            sampleOffset: sampleOffset
+        )
+    }
+
+    static func prepareExtraData(
+        updates: [AtmosMetadataUpdate],
+        sampleOffset: Int = 0
+    ) -> PendingExtraData {
+        let oamd = makeOAMDPayload(updates: updates, sampleOffset: sampleOffset)
         return PendingExtraData(
             oamd: oamd,
             canonicalEvolution: makeEvolutionFrame(oamd: oamd, primaryProtection: 0)
@@ -160,51 +190,67 @@ enum AtmosMetadataWriter {
         positions: [ADMPosition],
         sampleOffset: Int = 0
     ) -> [UInt8] {
-        let offsetIndex: Int?
-        let blockOffsetFactor: Int
-        switch sampleOffset {
-        case 0:
-            offsetIndex = nil
-            blockOffsetFactor = 0
-        case 8:
-            offsetIndex = 0
-            blockOffsetFactor = 0
-        case 16:
-            offsetIndex = 1
-            blockOffsetFactor = 0
-        case 24:
-            offsetIndex = 3
-            blockOffsetFactor = 0
-        case 32:
-            offsetIndex = nil
-            blockOffsetFactor = 1
-        default:
-            preconditionFailure("OAMD sample offset must be 0, 8, 16, 24, or 32")
-        }
+        makeOAMDPayload(
+            updates: [
+                AtmosMetadataUpdate(
+                    blockOffsetFactor: 0,
+                    rampDuration: 1_536,
+                    positions: positions
+                )
+            ],
+            sampleOffset: sampleOffset
+        )
+    }
 
-        var objectElement = BitWriter(reservingCapacity: 96)
+    static func makeOAMDPayload(
+        updates: [AtmosMetadataUpdate],
+        sampleOffset: Int = 0
+    ) -> [UInt8] {
+        // The native TrueHD OAMD profile carried by this encoder uses one
+        // complete Object-info block per 1536-sample metadata frame. The
+        // previously guessed multi-block status/update syntax was not accepted
+        // by the Dolby decoder and caused the Object render to disappear.
+        precondition(updates.count == 1)
+        let update = updates[0]
+        let firstPositions = update.positions
+        precondition((0...39).contains(sampleOffset))
+
+        // sample_offset is limited to 0...31. Values in the final eight
+        // samples of a 40-sample access unit are represented by moving every
+        // block forward once and keeping the exact residual offset.
+        let encodedSampleOffset = sampleOffset & 31
+        let accessUnitBlockOffset = sampleOffset >> 5
+        precondition(update.blockOffsetFactor + accessUnitBlockOffset <= 63)
+
+        var objectElement = BitWriter(reservingCapacity: 512)
         objectElement.write(0, count: 1) // OA element is required for object rendering
-        if let offsetIndex {
-            objectElement.write(1, count: 2)
-            objectElement.write(UInt64(offsetIndex), count: 2)
-        } else {
+        switch encodedSampleOffset {
+        case 0:
             objectElement.write(0, count: 2)
+        case 8, 16, 18, 24:
+            let indexes = [8: 0, 16: 1, 18: 2, 24: 3]
+            objectElement.write(1, count: 2)
+            objectElement.write(UInt64(indexes[encodedSampleOffset]!), count: 2)
+        default:
+            objectElement.write(2, count: 2)
+            objectElement.write(UInt64(encodedSampleOffset), count: 5)
         }
-        objectElement.write(0, count: 3) // one object-info block
-        objectElement.write(UInt64(blockOffsetFactor), count: 6)
-        objectElement.write(2, count: 2) // 1536-sample metadata ramp
+        objectElement.write(0, count: 3) // one complete Object-info block
+        objectElement.write(
+            UInt64(update.blockOffsetFactor + accessUnitBlockOffset),
+            count: 6
+        )
+        writeRampDuration(update.rampDuration, to: &objectElement)
         objectElement.write(1, count: 1) // no reserved object data
 
-        for objectIndex in positions.indices {
+        for objectIndex in firstPositions.indices {
             objectElement.write(0, count: 1) // active
             // Code 3 selects the default 0 dB gain for positional signals.
-            // The LFE entry has no positional payload and uses code 0, matching
-            // the reference OAMD signal syntax.
+            // The LFE entry has no positional payload and uses code 0.
             objectElement.write(objectIndex == 0 ? 0 : 3, count: 2)
             objectElement.write(1, count: 1) // default priority
-
             if objectIndex != 0 { // object zero is the LFE bed element
-                writePosition(positions[objectIndex], to: &objectElement)
+                writePosition(update.positions[objectIndex], to: &objectElement)
                 objectElement.write(0, count: 3) // no zone constraint
                 objectElement.write(1, count: 1) // elevation enabled
                 objectElement.write(0, count: 2) // point object
@@ -218,12 +264,17 @@ enum AtmosMetadataWriter {
 
         var payload = BitWriter(reservingCapacity: objectElement.bytes.count + 8)
         payload.write(0, count: 2) // OAMD version 0
-        payload.write(UInt64(positions.count - 1), count: 5)
+        payload.write(UInt64(firstPositions.count - 1), count: 5)
         payload.write(1, count: 1) // dynamic-object-only program
         payload.write(1, count: 1) // first element is LFE
         payload.write(0, count: 1) // no alternate object data
         payload.write(1, count: 4) // one OA metadata element
         payload.write(1, count: 4) // Object element
+        // For a known Object element, oa_element_size_minus1 describes the
+        // Object-element payload itself. There is no discard flag in front of
+        // a recognized element. Inserting one shifts the complete OAMD syntax
+        // by one bit; the Dolby decoder then rejects every metadata frame and
+        // the Object render repeatedly drops out.
         writeVariable(objectElement.bytes.count - 1, groupBits: 4, to: &payload)
         for byte in objectElement.bytes {
             payload.write(UInt64(byte), count: 8)
@@ -231,6 +282,25 @@ enum AtmosMetadataWriter {
         payload.align(toMultipleOf: 8)
         payload.flush()
         return payload.bytes
+    }
+
+    private static func writeRampDuration(
+        _ duration: Int,
+        to writer: inout BitWriter
+    ) {
+        switch duration {
+        case 0:
+            writer.write(0, count: 2)
+        case 512:
+            writer.write(1, count: 2)
+        case 1_536:
+            writer.write(2, count: 2)
+        default:
+            precondition((0...2_047).contains(duration))
+            writer.write(3, count: 2)
+            writer.write(0, count: 1) // explicit 11-bit duration
+            writer.write(UInt64(duration), count: 11)
+        }
     }
 
     private static func makeEvolutionFrame(

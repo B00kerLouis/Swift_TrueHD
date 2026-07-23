@@ -78,6 +78,17 @@ private struct TurehdaCLI {
         if let frameRate = result.outputFrameRate {
             print("Output frame rate: \(frameRate.displayName) fps; FFOA: \(result.firstFrameOfAction)")
         }
+        if let accuracy = result.spatialAccuracy {
+            let spatialElementCount = max(0, result.spatialClusterCount - 8)
+            print(
+                "Spatial approximation: max XYZ deviation "
+                    + "\(String(format: "%.6f", accuracy.maximumQuantizedPositionError)), "
+                    + "energy-weighted RMS "
+                    + "\(String(format: "%.6f", accuracy.energyWeightedRMSQuantizedPositionError)); "
+                    + "grouped intervals \(accuracy.groupedIntervalCount)/\(accuracy.intervalCount) "
+                    + "using \(spatialElementCount) spatial elements"
+            )
+        }
         print("Job manifest: \(result.manifestURL.path)")
         print("Encode log: \(result.logURL.path)")
     }

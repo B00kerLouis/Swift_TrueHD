@@ -176,7 +176,17 @@ final class NativeComplianceTests: XCTestCase {
             firstFrameOfAction: "00:00:00:00",
             spatialClusterCount: 14,
             elementBitDepth: 20,
-            drcProfile: .filmLight
+            drcProfile: .filmLight,
+            spatialAccuracy: TrueHDSpatialAccuracy(
+                intervalCount: 63,
+                maximumActiveSpatialSources: 9,
+                groupedIntervalCount: 2,
+                sourceIntervalCount: 100,
+                exactlyRepresentedSourceIntervals: 97,
+                assignmentChangeCount: 1,
+                maximumQuantizedPositionError: 0.12345678,
+                energyWeightedRMSQuantizedPositionError: 0.01234567
+            )
         )
         let configuration = TrueHDEncoderConfiguration(
             spatialClusterCount: 14, frameRate: .fps25
@@ -197,7 +207,20 @@ final class NativeComplianceTests: XCTestCase {
         XCTAssertTrue(manifest.contains("<frame-rate>25</frame-rate>"))
         XCTAssertTrue(manifest.contains("<drc-profile>film_light</drc-profile>"))
         XCTAssertTrue(manifest.contains("generator=\"Swift TrueHD Native Atmos\""))
+        XCTAssertTrue(manifest.contains("<encode version=\"3\""))
         XCTAssertTrue(manifest.contains("<automatic-compliance>"))
+        XCTAssertTrue(manifest.contains(
+            "<available-spatial-elements>6</available-spatial-elements>"
+        ))
+        XCTAssertTrue(manifest.contains(
+            "<maximum-quantized-xyz-deviation>0.12345678</maximum-quantized-xyz-deviation>"
+        ))
+        XCTAssertFalse(manifest.contains("xyz-error"))
         XCTAssertTrue(log.contains("First frame of action: 00:00:00:00"))
+        XCTAssertTrue(log.contains("Spatial approximation"))
+        XCTAssertTrue(log.contains("Available spatial elements: 6"))
+        XCTAssertTrue(log.contains("Maximum quantized XYZ deviation: 0.12345678"))
+        XCTAssertTrue(log.contains("Grouped intervals: 2"))
+        XCTAssertFalse(log.contains("XYZ error"))
     }
 }

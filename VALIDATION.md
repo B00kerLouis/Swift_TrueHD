@@ -1,10 +1,72 @@
 # Validation
 
-Validation uses the supplied `ARI-Water_DAMF` master, a freshly regenerated
-reference stream from that same master, Dolby Reference Player (DRP), and
-FFmpeg's independent TrueHD parser. Project artifacts are produced by the
-native Swift encoder; the installed reference encoder is used only as an
-isolated acceptance oracle.
+Validation uses the supplied `ARI-Water_DAMF`, `QWER_TBH_IAB`, and
+`Dolby_NaturesFury` masters, a freshly regenerated reference stream, Dolby
+Reference Player (DRP), and FFmpeg's independent TrueHD parser. Project
+artifacts are produced by the native Swift encoder; the installed reference
+encoder is used only as an isolated acceptance oracle.
+
+## More-than-eight-channel playback regression
+
+The 2026-07-22 regression candidate was rebuilt from the current Release
+sources and encoded from the complete 84-channel `ARI-Water_DAMF` master. It
+contains 4,468,000 samples, four TrueHD substreams, and an independent
+16-element presentation. The output is 97,416,604 bytes with SHA-256
+`bfdc4e09fe0ba1a993fd0c97c073d6b1f1d5481125d179418578de4e93d8dc1f`.
+
+The playback interruption had two related metadata-path causes:
+
+- a known Object OAMD element was preceded by a guessed discard bit, shifting
+  the complete Object syntax and causing the object renderer to reject each
+  metadata frame;
+- DAMF persistent object IDs were treated unconditionally as physical CAF
+  channel indexes. The real master has 84 packed CAF channels but IDs through
+  101, so the reader must distinguish packed persistent IDs from genuinely
+  sparse physical slot arrays.
+
+Dolby Reference Player 4.2.1.17378 validated the corrected stream as follows:
+
+| DRP path | Result |
+|---|---|
+| Forced 8-channel presentation to 7.1 WAV | EOS, exit 0, 4,468,000 frames |
+| Forced 16-channel presentation through OAR to 7.1 WAV | EOS, exit 0, 4,468,000 frames |
+| Forced 16-channel presentation through OAR to 7.1.4 on Pro Tools Audio Bridge 16 | Complete real-time playback, exit 0 |
+
+Both decoded WAV files are exactly 93.083333 seconds. A `-90 dB`, 40 ms
+silence scan found no interior all-channel dropout in the 16-channel/OAR
+render; only the intended final 46.875 ms tail was silent. DRP identified the
+stream as FBA Dolby Atmos with four substreams and 16 elements. The complete
+native Evolution audit also passed every access-header parity, protected-frame
+parity, length, and HMAC check.
+
+## Multi-master encode matrix
+
+The 2026-07-22 acceptance run exercised independent DAMF and IMF IAB sources
+with all supported spatial-element counts and different DRC profiles. Every
+encode completed from the first source sample through EOS and emitted its
+manifest and encode log.
+
+| Source | Input | Elements | DRC profile | Samples / duration | Bytes | SHA-256 |
+|---|---|---:|---|---:|---:|---|
+| ARI Water | DAMF | 16 | `film_light` | 4,468,000 / 93.083333 s | 97,416,604 | `bfdc4e09fe0ba1a993fd0c97c073d6b1f1d5481125d179418578de4e93d8dc1f` |
+| QWER TBH | IMF IAB MXF | 12 | `film_standard` | 11,036,000 / 229.916667 s | 183,229,866 | `a923ca86171d2da4d1bfd350f8cf754e3f466f6750f84fa0c5ea6848eb7cfe82` |
+| Dolby Nature's Fury | IMF IAB MXF | 14 | `music_light` | 5,200,000 / 108.333333 s | 88,430,568 | `a69eda50707c9f0057186375a7e7f7a893a244c51f5606af314f1ad784f0192a` |
+
+DRP identified all three results as FBA Dolby Atmos with four substreams and
+the requested 12-, 14-, or 16-element independent presentation. For every
+stream, forced presentation 8 decoded to 7.1 through EOS, forced presentation
+16 plus OAR decoded to 7.1 through EOS, and presentation 16 played to 7.1.4 on
+Pro Tools Audio Bridge 16 through EOS. The file decodes produced exactly the
+source sample count in both presentation paths.
+
+A `-90 dB`, 40 ms all-channel silence scan compared the presentation-8 and
+presentation-16/OAR WAV files. QWER's two intentional interior/tail silence
+regions and Nature's Fury's intentional head/tail silence regions matched
+between paths after the expected 32-sample OAR latency; no presentation-16-only
+dropout was found. The complete native Evolution/OAMD audit passed for both new
+IAB encodes, and each supplied IAB master separately passed native frame
+indexing and PCM-read validation. The final external-fixture XCTest run passed
+47 of 47 tests with zero skips and zero failures.
 
 ## Full-program comparison
 
@@ -89,14 +151,17 @@ verifies both the new HMAC byte and parity.
 
 ## Acceptance closure
 
-- Swift 6 Debug: 40 XCTest cases pass with external fixtures enabled; zero are
+- Swift 6 Debug: 47 XCTest cases pass with external fixtures enabled; zero are
   skipped. This includes the full native Evolution audit, the fresh-reference
   HMAC vector, exact restart-seed evolution, matrix round trips, all DRC curves,
   Huffman/FIR/LPC residuals, ADM/DAMF, and MXF IAB input.
-- Swift 6 Release: framework and CLI build as universal arm64/x86_64 binaries.
-- Backend audit: the executable links only the native project framework and
-  Apple system libraries. `Sources` contains no external encoder invocation,
-  process launcher, Wine adapter, executable path, or backend branch.
+- Swift 6 Release: the static framework archive and CLI executable build with
+  universal arm64/x86_64 slices.
+- Backend audit: `libtruehda` is linked into the CLI statically; `otool -L`
+  lists no `libtruehda.framework` dependency, and the copied executable starts
+  without the framework present. Remaining dynamic dependencies are Apple
+  system libraries. `Sources` contains no external encoder invocation, process
+  launcher, Wine adapter, executable path, or backend branch.
 - Comment audit: source and test comments contain no reference to an external
   encoder product.
 - DRP strict decoder: 25 full-program combinations (five profiles multiplied

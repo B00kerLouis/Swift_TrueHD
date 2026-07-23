@@ -91,7 +91,17 @@ xcodebuild \
 
 The framework and CLI are written to
 `Build/Products/Release/libtruehda.framework` and
-`Build/Products/Release/turehda`. Both contain arm64 and x86_64 slices.
+`Build/Products/Release/turehda`. Both contain arm64 and x86_64 slices. The
+framework binary is a static archive: Xcode links its object code directly into
+`turehda`, so the CLI can be copied and run without shipping
+`libtruehda.framework` beside it.
+
+The standalone-link requirement can be checked with:
+
+```sh
+! otool -L Build/Products/Release/turehda | grep -q libtruehda
+Build/Products/Release/turehda --help
+```
 
 Run the Xcode-managed test target with:
 
@@ -229,7 +239,7 @@ The exact generated selector is available in the framework's
 
 The regression workflow checks:
 
-- Swift 6 Release compilation and 40 XCTest cases covering checksums, bit
+- Swift 6 Release compilation and 47 XCTest cases covering checksums, bit
   packing, Huffman offset inheritance, FIR/LPC residuals, ADM metadata,
   HMAC reauthentication, restart seed evolution, DRC curves and gain packing,
   headroom-cache equivalence, source timing, and native DAMF/IAB readers;
