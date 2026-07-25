@@ -704,7 +704,7 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
         XCTAssertEqual(Array(encoded.samples.prefix(8)), [4, 2, 6, 3, 7, 10, 9, 5])
     }
 
-    func testSpatialCoderDoesNotAttenuateAnActiveObjectBecauseAssignedTracksAreSilent() throws {
+    func testSpatialCoderDoesNotAttenuateAnActiveObjectBecauseOtherTracksAreSilent() throws {
         let bedFormatIDs = [
             "AC_00011004", "AC_00011001", "AC_00011002", "AC_00011003",
             "AC_00011007", "AC_00011008", "AC_00011005", "AC_00011006"
@@ -736,7 +736,12 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
         source[8] = 4_096
 
         let encoded = coder.encode(source: source, frameCount: 1, sourceStartFrame: 0)
-        XCTAssertGreaterThan(encoded.samples[8..<16].reduce(0, +), 240)
+        XCTAssertGreaterThan(encoded.samples[8..<16].reduce(0, +), 0)
+        XCTAssertGreaterThan(
+            encoded.samples.enumerated().filter { $0.offset != 3 }
+                .reduce(Int64(0)) { $0 + Int64($1.element) * Int64($1.element) },
+            240 * 240
+        )
     }
 
     func testSpatialCoderKeepsPresentObjectWithoutPositionEvents() throws {
@@ -765,7 +770,11 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
         source[10] = 4_096
 
         let encoded = coder.encode(source: source, frameCount: 1, sourceStartFrame: 0)
-        XCTAssertNotEqual(encoded.samples[8..<16].reduce(0, +), 0)
+        XCTAssertNotEqual(
+            encoded.samples.enumerated().filter { $0.offset != 3 }
+                .reduce(0) { $0 + abs($1.element) },
+            0
+        )
     }
 
     func testSpatialCoderKeepsStaticBedAlignedObjectAsObject() throws {
@@ -800,12 +809,12 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
 
         let encoded = coder.encode(source: source, frameCount: 1, sourceStartFrame: 0)
         XCTAssertNotEqual(
-            encoded.samples[8..<16].reduce(0, +), 0,
-            "An Object remains positional even when its static XYZ matches a Bed speaker"
+            encoded.samples[0], 0,
+            "A Bed-aligned Object must remain in the fixed spatial rendering basis"
         )
     }
 
-    func testOAMDClusterPositionIgnoresSilentObjects() throws {
+    func testFixedOAMDBasisIgnoresSilentObjectsAndPansActivePCM() throws {
         let bedFormatIDs = [
             "AC_00011004", "AC_00011001", "AC_00011002", "AC_00011003",
             "AC_00011007", "AC_00011008", "AC_00011005", "AC_00011006",
@@ -869,28 +878,30 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
         let activeClusters = (0..<8).filter {
             firstElements[8 + $0] != 0
         }
-        let activeCluster = try XCTUnwrap(activeClusters.first)
-        XCTAssertEqual(activeClusters.count, 1, "One Object must occupy one transport element")
-        XCTAssertEqual(update.positions[8 + activeCluster].x, activePosition.x, accuracy: 0.000_001)
-        XCTAssertEqual(update.positions[8 + activeCluster].y, activePosition.y, accuracy: 0.000_001)
-        XCTAssertEqual(update.positions[8 + activeCluster].z, activePosition.z, accuracy: 0.000_001)
+        XCTAssertGreaterThan(
+            activeClusters.count, 1,
+            "An elevated Object must use a constant-power set of fixed height anchors"
+        )
+        XCTAssertEqual(update.positions, coder.positions(at: 0))
+        XCTAssertEqual(update.positions, coder.positions(at: 1_535))
 
         let serializedPositions = readOAMDPositions(
             AtmosMetadataWriter.makeOAMDPayload(positions: update.positions),
             positionCount: update.positions.count
         )
-        let serializedPosition = serializedPositions[7 + activeCluster]
-        XCTAssertEqual(serializedPosition.x, activePosition.x, accuracy: 1.0 / 31.0)
-        XCTAssertEqual(serializedPosition.y, activePosition.y, accuracy: 1.0 / 31.0)
-        XCTAssertEqual(serializedPosition.z, activePosition.z, accuracy: 1.0 / 15.0)
+        for (serialized, expected) in zip(serializedPositions, update.positions.dropFirst()) {
+            XCTAssertEqual(serialized.x, expected.x, accuracy: 1.0 / 31.0)
+            XCTAssertEqual(serialized.y, expected.y, accuracy: 1.0 / 31.0)
+            XCTAssertEqual(serialized.z, expected.z, accuracy: 1.0 / 15.0)
+        }
         let report = coder.spatialAccuracyReport()
         XCTAssertEqual(report.maximumActiveSpatialSources, 1)
         XCTAssertEqual(report.groupedIntervalCount, 0)
-        XCTAssertEqual(report.exactlyRepresentedSourceIntervals, 1)
-        XCTAssertLessThan(report.maximumQuantizedPositionError, 0.08)
+        XCTAssertEqual(report.assignmentChangeCount, 0)
+        XCTAssertLessThan(report.maximumQuantizedPositionError, 0.8)
     }
 
-    func testSpatialCoderGroupsOverCapacityObjectsWithoutCopyingSignal() throws {
+    func testSpatialCoderPansManyObjectsAcrossTheFixedRenderingBasis() throws {
         let bedFormatIDs = [
             "AC_00011004", "AC_00011001", "AC_00011002", "AC_00011003",
             "AC_00011007", "AC_00011008", "AC_00011005", "AC_00011006",
@@ -939,7 +950,7 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
         )
         defer { try? FileManager.default.removeItem(at: cache.url) }
         let data = try Data(contentsOf: cache.url)
-        let spatial = (8..<16).map { element in
+        let rendered = (0..<16).map { element in
             data.withUnsafeBytes {
                 $0.loadUnaligned(
                     fromByteOffset: element * MemoryLayout<Int64>.size,
@@ -947,14 +958,67 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
                 )
             }
         }
-        XCTAssertEqual(spatial.filter { $0 != 0 }.count, 8)
-        XCTAssertEqual(spatial.reduce(0, +), 10 * (4_096 >> 4))
+        XCTAssertGreaterThan(rendered.filter { $0 != 0 }.count, 8)
+        XCTAssertGreaterThan(
+            rendered.enumerated().filter { $0.offset != 3 }
+                .reduce(Int64(0)) { $0 + $1.element * $1.element },
+            0
+        )
 
         let report = coder.spatialAccuracyReport()
         XCTAssertEqual(report.maximumActiveSpatialSources, 10)
-        XCTAssertEqual(report.groupedIntervalCount, 1)
+        XCTAssertEqual(report.groupedIntervalCount, 0)
         XCTAssertEqual(report.sourceIntervalCount, 10)
-        XCTAssertLessThan(report.energyWeightedRMSQuantizedPositionError, 0.2)
+        XCTAssertEqual(report.assignmentChangeCount, 0)
+        XCTAssertLessThan(report.energyWeightedRMSQuantizedPositionError, 0.8)
+    }
+
+    func testHeightPannerUsesSmoothEqualPowerRowsNearSideAnchor() throws {
+        let bedFormatIDs = [
+            "AC_00011004", "AC_00011001", "AC_00011002", "AC_00011003",
+            "AC_00011007", "AC_00011008", "AC_00011005", "AC_00011006",
+            "AC_00011009", "AC_0001100a"
+        ]
+        var channels = bedFormatIDs.enumerated().map { index, formatID in
+            ADMChannelMetadata(
+                channelFormatID: formatID, isObject: false,
+                blocks: [], isPresent: index < 8
+            )
+        }
+        channels.append(ADMChannelMetadata(
+            channelFormatID: "AC_00031001",
+            isObject: true,
+            blocks: [ADMPositionBlock(
+                startFrame: 0, endFrame: .max,
+                position: ADMPosition(x: -1, y: -0.1, z: 1)
+            )]
+        ))
+        let coder = try AtmosSpatialCoder(
+            metadata: ADMMetadata(channels: channels),
+            sourceChannelCount: channels.count,
+            elementBitDepth: 20,
+            spatialClusterCount: 16
+        )
+        var source = [Int32](repeating: 0, count: channels.count)
+        source[10] = 1_048_576
+
+        let encoded = coder.encode(source: source, frameCount: 1, sourceStartFrame: 0)
+        let leftSideHeight = Double(encoded.samples[10])
+        let leftRearHeight = Double(encoded.samples[12])
+        XCTAssertGreaterThan(leftSideHeight, 0)
+        XCTAssertGreaterThan(leftRearHeight, 0)
+        XCTAssertEqual(
+            leftRearHeight / leftSideHeight,
+            tan(0.1 * Double.pi / 2),
+            accuracy: 0.002,
+            "A slightly rearward Object must crossfade smoothly instead of sticking to one height anchor"
+        )
+        XCTAssertEqual(
+            hypot(leftSideHeight, leftRearHeight),
+            65_536,
+            accuracy: 2,
+            "Height-row interpolation must preserve Object power"
+        )
     }
 
     func testSpatialCoderLimitsMixedElementsToRequestedBitDepth() throws {
@@ -990,10 +1054,16 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
         )
 
         XCTAssertTrue(encoded.samples.allSatisfy { (-65_536...65_535).contains($0) })
-        XCTAssertTrue(encoded.samples.contains(65_535))
+        let transport = AtmosCompatibilityMatrix.transportSamples(
+            standardSamples: encoded.samples,
+            channelCount: 16
+        )
+        XCTAssertTrue(transport.allSatisfy { (-65_536...65_535).contains($0) })
+        XCTAssertGreaterThanOrEqual(transport.map { $0.magnitude }.max() ?? 0, 65_400)
+        XCTAssertLessThan(transport.map { $0.magnitude }.max() ?? 0, 65_535)
     }
 
-    func testSpatialCoderKeepsMovingObjectOnOneElementAndMovesOAMDPosition() throws {
+    func testSpatialCoderMovesPCMAcrossAStableOAMDBasis() throws {
         let bedFormatIDs = [
             "AC_00011004", "AC_00011001", "AC_00011002", "AC_00011003",
             "AC_00011007", "AC_00011008", "AC_00011005", "AC_00011006"
@@ -1039,17 +1109,29 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
         samplesByChannel[10] = 4_096
         let reader = TestAudioReader(
             channelCount: channels.count,
-            frameCount: 3_072,
+            frameCount: 4_608,
             samplesByChannel: samplesByChannel,
             metadata: ADMMetadata(channels: channels)
         )
         let cache = try coder.prepareElementCache(
-            reader: reader, startFrame: 0, frameCount: 3_072
+            reader: reader, startFrame: 0, frameCount: 4_608
         )
         defer { try? FileManager.default.removeItem(at: cache.url) }
         let cacheData = try Data(contentsOf: cache.url)
-        func activeCluster(at frame: Int) -> Int? {
-            (0..<8).first { cluster in
+        func heightPower(at frame: Int, clusters: [Int]) -> Int64 {
+            clusters.reduce(Int64(0)) { power, cluster in
+                let sample: Int64 = cacheData.withUnsafeBytes {
+                    $0.loadUnaligned(
+                        fromByteOffset: (frame * 16 + 8 + cluster)
+                            * MemoryLayout<Int64>.size,
+                        as: Int64.self
+                    )
+                }
+                return power + sample * sample
+            }
+        }
+        func activeHeightElements(at frame: Int) -> Int {
+            (0..<8).filter { cluster in
                 cacheData.withUnsafeBytes {
                     $0.loadUnaligned(
                         fromByteOffset: (frame * 16 + 8 + cluster)
@@ -1057,40 +1139,143 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
                         as: Int64.self
                     ) != 0
                 }
-            }
+            }.count
         }
-        let firstCluster = try XCTUnwrap(activeCluster(at: 0))
-        let secondCluster = try XCTUnwrap(activeCluster(at: 1_536))
-        XCTAssertEqual(firstCluster, secondCluster)
+        XCTAssertGreaterThan(activeHeightElements(at: 0), 1)
+        XCTAssertGreaterThan(
+            heightPower(at: 0, clusters: [0, 1, 6]),
+            heightPower(at: 0, clusters: [4, 5, 7])
+        )
+        XCTAssertGreaterThan(
+            heightPower(at: 4_607, clusters: [4, 5, 7]),
+            heightPower(at: 4_607, clusters: [0, 1, 6])
+        )
 
         let front = try XCTUnwrap(coder.metadataUpdates(
-            frameStart: 0, programmeStart: 0, programmeEnd: 3_072
+            frameStart: 0, programmeStart: 0, programmeEnd: 4_608
         ).first)
         let rear = try XCTUnwrap(coder.metadataUpdates(
-            frameStart: 1_536, programmeStart: 0, programmeEnd: 3_072
+            frameStart: 3_072, programmeStart: 0, programmeEnd: 4_608
         ).first)
         let frontRender = coder.matrixRenderCoefficients(at: 0)
-        let rearRender = coder.matrixRenderCoefficients(at: 3_071)
-        XCTAssertEqual(front.positions[8 + firstCluster].y, 0.8, accuracy: 0.000_001)
-        XCTAssertEqual(rear.positions[8 + secondCluster].y, -0.8, accuracy: 0.000_001)
-        XCTAssertEqual(front.positions[8 + firstCluster].z, 0.7, accuracy: 0.000_001)
-        XCTAssertEqual(rear.positions[8 + secondCluster].z, 0.7, accuracy: 0.000_001)
+        let rearRender = coder.matrixRenderCoefficients(at: 4_607)
         let report = coder.spatialAccuracyReport()
-        XCTAssertEqual(report.exactlyRepresentedSourceIntervals, 2)
         XCTAssertEqual(report.assignmentChangeCount, 0)
-        XCTAssertNotEqual(front.positions, rear.positions)
-        XCTAssertNotEqual(frontRender, rearRender)
-        XCTAssertGreaterThan(
-            frontRender[firstCluster][0] + frontRender[firstCluster][2],
-            frontRender[firstCluster][6] + frontRender[firstCluster][7]
-        )
-        XCTAssertGreaterThan(
-            rearRender[secondCluster][6] + rearRender[secondCluster][7],
-            rearRender[secondCluster][0] + rearRender[secondCluster][2]
-        )
+        XCTAssertEqual(front.positions, rear.positions)
+        XCTAssertEqual(frontRender, rearRender)
     }
 
-    func testSpatialCoderComputesFixedWholeProgramHeadroom() throws {
+    func testSpatialCoderSmoothsHighSpeedXYZMotionAcrossMetadataBoundary() throws {
+        let bedFormatIDs = [
+            "AC_00011004", "AC_00011001", "AC_00011002", "AC_00011003",
+            "AC_00011007", "AC_00011008", "AC_00011005", "AC_00011006"
+        ]
+        var channels = bedFormatIDs.map {
+            ADMChannelMetadata(channelFormatID: $0, isObject: false, blocks: [])
+        }
+        let starts = (0..<10).map { index in
+            let angle = Double(index) * 2 * Double.pi / 10
+            return ADMPosition(x: cos(angle) * 0.9, y: sin(angle) * 0.9, z: 0.7)
+        }
+        channels.append(contentsOf: starts.enumerated().map { index, start in
+            ADMChannelMetadata(
+                channelFormatID: String(format: "AC_00033%03d", index),
+                isObject: true,
+                blocks: [
+                    ADMPositionBlock(
+                        startFrame: 0, endFrame: 1_536, position: start,
+                        interpolatesToNext: true
+                    ),
+                    ADMPositionBlock(
+                        startFrame: 1_536, endFrame: .max,
+                        position: ADMPosition(
+                            x: -start.x, y: -start.y,
+                            z: index.isMultiple(of: 2) ? 0.05 : 1
+                        )
+                    )
+                ]
+            )
+        })
+        let metadata = ADMMetadata(channels: channels)
+        let coder = try AtmosSpatialCoder(
+            metadata: metadata, sourceChannelCount: channels.count,
+            elementBitDepth: 20, spatialClusterCount: 16
+        )
+        var samplesByChannel = [Int32](repeating: 0, count: channels.count)
+        for channel in 8..<channels.count {
+            samplesByChannel[channel] = Int32((channel - 7) * 4_096)
+        }
+        let reader = TestAudioReader(
+            channelCount: channels.count, frameCount: 3_072,
+            samplesByChannel: samplesByChannel, metadata: metadata
+        )
+        let cache = try coder.prepareElementCache(
+            reader: reader, startFrame: 0, frameCount: 3_072
+        )
+        defer { try? FileManager.default.removeItem(at: cache.url) }
+        let data = try Data(contentsOf: cache.url)
+        func renderedSamples(at frame: Int) -> [Int64] {
+            (0..<16).filter { $0 != 3 }.map { element in
+                data.withUnsafeBytes {
+                    $0.loadUnaligned(
+                        fromByteOffset: (frame * 16 + element)
+                            * MemoryLayout<Int64>.size,
+                        as: Int64.self
+                    )
+                }
+            }
+        }
+
+        let boundarySteps = zip(
+            renderedSamples(at: 1_535), renderedSamples(at: 1_536)
+        ).map { abs($0.0 - $0.1) }
+        let precedingSteps = zip(
+            renderedSamples(at: 1_534), renderedSamples(at: 1_535)
+        ).map { abs($0.0 - $0.1) }
+        let followingSteps = zip(
+            renderedSamples(at: 1_536), renderedSamples(at: 1_537)
+        ).map { abs($0.0 - $0.1) }
+        XCTAssertLessThanOrEqual(
+            boundarySteps.max() ?? .max,
+            max(precedingSteps.max() ?? 0, followingSteps.max() ?? 0) + 1,
+            "The metadata boundary must not exceed the surrounding ramp slope"
+        )
+        XCTAssertEqual(coder.spatialAccuracyReport().assignmentChangeCount, 0)
+        var maximumSpatialStep: Int64 = 0
+        var previousSpatial = renderedSamples(at: 1_535)
+        for frame in 1_536..<3_072 {
+            let currentSpatial = renderedSamples(at: frame)
+            for element in currentSpatial.indices {
+                maximumSpatialStep = max(
+                    maximumSpatialStep,
+                    abs(currentSpatial[element] - previousSpatial[element])
+                )
+            }
+            previousSpatial = currentSpatial
+        }
+        XCTAssertLessThanOrEqual(
+            maximumSpatialStep, 128,
+            "Rapid horizontal and height motion must remain a bounded per-sample ramp"
+        )
+        XCTAssertEqual(
+            coder.matrixRenderCoefficients(at: 1_535),
+            coder.matrixRenderCoefficients(at: 1_536),
+            "The compatibility matrix must begin the OAMD ramp without a boundary step"
+        )
+        XCTAssertEqual(
+            coder.matrixRenderCoefficients(at: 1_536),
+            coder.matrixRenderCoefficients(at: 3_071)
+        )
+        let firstMetadata = try XCTUnwrap(coder.metadataUpdates(
+            frameStart: 0, programmeStart: 0, programmeEnd: 3_072
+        ).first)
+        let secondMetadata = try XCTUnwrap(coder.metadataUpdates(
+            frameStart: 1_536, programmeStart: 0, programmeEnd: 3_072
+        ).first)
+        XCTAssertEqual(firstMetadata.positions, secondMetadata.positions)
+    }
+
+    func testSpatialCoderLimitsOverloadsWithoutWholeProgramAttenuation() throws {
         let bedFormatIDs = [
             "AC_00011004", "AC_00011001", "AC_00011002", "AC_00011003",
             "AC_00011007", "AC_00011008", "AC_00011005", "AC_00011006"
@@ -1140,12 +1325,18 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
         )
         defer { try? FileManager.default.removeItem(at: cache.url) }
         XCTAssertEqual(cache.headroomShift, 4)
+        XCTAssertEqual(cache.limiterGains.count, 80)
+        XCTAssertTrue(cache.limiterGains.allSatisfy { $0 < UInt32(1) << 30 })
         let data = try Data(contentsOf: cache.url)
         let unscaled = data.withUnsafeBytes {
             Array($0.bindMemory(to: Int64.self))
         }
-        coder.setAdditionalHeadroomShift(cache.headroomShift)
-        let cachedSamples = coder.quantize(unscaledSamples: unscaled)
+        let cachedSamples = coder.quantize(
+            unscaledSamples: unscaled,
+            limiterGains: cache.limiterGains[
+                cache.limiterGains.startIndex..<cache.limiterGains.endIndex
+            ]
+        )
 
         var directSamples = [Int32]()
         let source = [Int32](
@@ -1158,6 +1349,52 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
             source: source, frameCount: 40, sourceStartFrame: 40
         ).samples
         XCTAssertEqual(cachedSamples, directSamples)
+
+        let quietReader = TestAudioReader(
+            channelCount: channels.count,
+            frameCount: 80,
+            sample: 0x0000_1000,
+            metadata: metadata
+        )
+        let quietCache = try coder.prepareElementCache(
+            reader: quietReader, startFrame: 0, frameCount: 80
+        )
+        defer { try? FileManager.default.removeItem(at: quietCache.url) }
+        XCTAssertTrue(
+            quietCache.limiterGains.allSatisfy { $0 == UInt32(1) << 30 },
+            "Signals inside the 20-bit matrix range must retain unity gain"
+        )
+
+        var transient = [Int32](
+            repeating: 0, count: 4_096 * channels.count
+        )
+        for channel in 8..<channels.count {
+            transient[2_048 * channels.count + channel] = 0x007F_FFFF
+        }
+        let transientReader = TestAudioReader(
+            channelCount: channels.count,
+            interleavedSamples: transient,
+            metadata: metadata
+        )
+        let transientCache = try coder.prepareElementCache(
+            reader: transientReader, startFrame: 0, frameCount: 4_096
+        )
+        defer { try? FileManager.default.removeItem(at: transientCache.url) }
+        let unity = UInt32(1) << 30
+        var maximumAttackDelta: UInt32 = 0
+        var maximumReleaseDelta: UInt32 = 0
+        for index in 1..<transientCache.limiterGains.count {
+            let previous = transientCache.limiterGains[index - 1]
+            let current = transientCache.limiterGains[index]
+            if current < previous {
+                maximumAttackDelta = max(maximumAttackDelta, previous - current)
+            } else {
+                maximumReleaseDelta = max(maximumReleaseDelta, current - previous)
+            }
+        }
+        XCTAssertLessThanOrEqual(maximumAttackDelta, unity / 1_024 + 128)
+        XCTAssertLessThanOrEqual(maximumReleaseDelta, unity / 4_800 + 128)
+        XCTAssertLessThan(transientCache.limiterGains[2_048], unity)
     }
 
     func testSpatialCoderProducesRequestedElementCount() throws {
@@ -1207,10 +1444,12 @@ private final class TestAudioReader: TrueHDAudioReader {
     let sourceFrameRate: TrueHDFrameRate? = nil
 
     private let samplesByChannel: [Int32]
+    private let interleavedSamples: [Int32]?
     private var currentFrame: UInt64 = 0
 
     init(channelCount: Int, frameCount: UInt64, sample: Int32, metadata: ADMMetadata) {
         self.samplesByChannel = [Int32](repeating: sample, count: channelCount)
+        interleavedSamples = nil
         format = WaveFormat(
             sampleRate: 48_000,
             channelCount: channelCount,
@@ -1242,12 +1481,42 @@ private final class TestAudioReader: TrueHDAudioReader {
         )
         self.frameCount = frameCount
         self.samplesByChannel = samplesByChannel
+        interleavedSamples = nil
+        admMetadata = metadata
+    }
+
+    init(
+        channelCount: Int,
+        interleavedSamples: [Int32],
+        metadata: ADMMetadata
+    ) {
+        precondition(interleavedSamples.count.isMultiple(of: channelCount))
+        format = WaveFormat(
+            sampleRate: 48_000,
+            channelCount: channelCount,
+            bitsPerSample: 24,
+            validBitsPerSample: 24,
+            blockAlignment: channelCount * 3,
+            channelMask: 0,
+            isBigEndian: false
+        )
+        frameCount = UInt64(interleavedSamples.count / channelCount)
+        samplesByChannel = [Int32](repeating: 0, count: channelCount)
+        self.interleavedSamples = interleavedSamples
         admMetadata = metadata
     }
 
     func readFrames(maxCount: Int) throws -> PCMFrameBlock {
         let count = Int(min(UInt64(maxCount), frameCount - currentFrame))
+        let startFrame = Int(currentFrame)
         currentFrame += UInt64(count)
+        if let interleavedSamples {
+            let start = startFrame * format.channelCount
+            let end = (startFrame + count) * format.channelCount
+            return PCMFrameBlock(
+                samples: Array(interleavedSamples[start..<end]), frameCount: count
+            )
+        }
         return PCMFrameBlock(
             samples: Array(repeating: samplesByChannel, count: count).flatMap { $0 },
             frameCount: count

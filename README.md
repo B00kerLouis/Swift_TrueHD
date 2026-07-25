@@ -20,13 +20,14 @@ compliance decisions. Atmos starts at 20-bit elements and automatically retries
 transport ceiling. The validated restart interval is selected internally.
 
 The internal Atmos spatial coder reduces source ADM tracks to the requested
-12, 14, or 16 transport elements.
-Object-to-cluster assignments remain stable transport tracks. At each 1,536-sample
-OAMD metadata interval, moving-cluster positions and 7.1 matrix render targets are
-updated so moving objects follow their current positions without discontinuously
-switching PCM element tracks. The selected element depth and fixed whole-program
-headroom keep the four cumulative presentations within the 18 Mbps TrueHD
-transport ceiling. This reduction is
+12, 14, or 16 transport elements. OAMD elements remain at fixed horizontal and
+height anchors while Object motion is represented by continuous equal-power PCM
+panning across that basis. Dense DAMF position updates are smoothed over one
+1,536-sample metadata interval, and each 40-sample access unit interpolates its
+panning gains. This avoids Object identity swaps, moving-coordinate collapse,
+and level discontinuities during rapid horizontal or height motion. The selected
+element depth and linked overload limiter keep the four cumulative presentations
+within the 18 Mbps TrueHD transport ceiling. This reduction is
 intentionally not described as track-for-track lossless; after spatial coding,
 the transported elements and their 7.1 compatibility-matrix relation are
 lossless.
@@ -239,7 +240,7 @@ The exact generated selector is available in the framework's
 
 The regression workflow checks:
 
-- Swift 6 Release compilation and 47 XCTest cases covering checksums, bit
+- Swift 6 Release compilation and 57 XCTest cases covering checksums, bit
   packing, Huffman offset inheritance, FIR/LPC residuals, ADM metadata,
   HMAC reauthentication, restart seed evolution, DRC curves and gain packing,
   headroom-cache equivalence, source timing, and native DAMF/IAB readers;
@@ -260,7 +261,8 @@ The regression workflow checks:
 See [VALIDATION.md](VALIDATION.md) for the current official-stream comparison,
 decoder results, rate distribution, and artifact hashes.
 
-This project has been tested for playback with Dolby Reference Player 4.2.0.
+This project has passed complete 2/6/8/16-presentation playback verification
+with DRP v4.2.1.17378.
 This project is not Dolby-certified. No license to any Dolby patents,
 trademarks, format rights, or certification rights is granted by this project.
 Product distribution or commercial use may require rights or licenses

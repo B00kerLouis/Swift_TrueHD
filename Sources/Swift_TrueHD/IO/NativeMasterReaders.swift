@@ -165,19 +165,7 @@ final class CAFFileReader: TrueHDAudioReader {
         let byteCount = requested * format.blockAlignment
         let offset = dataOffset + currentFrame * UInt64(format.blockAlignment)
         let bytes = try Self.readExactly(handle, offset: offset, count: byteCount)
-        var samples = [Int32]()
-        samples.reserveCapacity(requested * format.channelCount)
-        let bytesPerSample = format.bitsPerSample / 8
-        for frame in 0..<requested {
-            let frameOffset = frame * format.blockAlignment
-            for channel in 0..<format.channelCount {
-                samples.append(try Self.decodeSample(
-                    bytes,
-                    at: frameOffset + channel * bytesPerSample,
-                    format: format
-                ))
-            }
-        }
+        let samples = Self.decodeSamples(bytes, frameCount: requested, format: format)
         currentFrame += UInt64(requested)
         return PCMFrameBlock(samples: samples, frameCount: requested)
     }
@@ -189,23 +177,100 @@ final class CAFFileReader: TrueHDAudioReader {
         currentFrame = frame
     }
 
-    private static func decodeSample(_ bytes: Data, at offset: Int, format: WaveFormat) throws -> Int32 {
-        let raw = Array(bytes[offset..<(offset + format.bitsPerSample / 8)])
-        let b: [UInt8] = format.isBigEndian ? raw : Array(raw.reversed())
-        switch format.bitsPerSample {
-        case 16:
-            let raw = UInt16(b[0]) << 8 | UInt16(b[1])
-            return Int32(Int16(bitPattern: raw)) << 8
-        case 24:
-            var raw = UInt32(b[0]) << 16 | UInt32(b[1]) << 8 | UInt32(b[2])
-            if raw & 0x0080_0000 != 0 { raw |= 0xFF00_0000 }
-            return Int32(bitPattern: raw)
-        case 32:
-            let raw = UInt32(b[0]) << 24 | UInt32(b[1]) << 16 | UInt32(b[2]) << 8 | UInt32(b[3])
-            return Int32(bitPattern: raw) >> 8
-        default:
-            throw TrueHDError.unsupportedInput("Unsupported CAF sample depth")
+    private static func decodeSamples(
+        _ data: Data,
+        frameCount: Int,
+        format: WaveFormat
+    ) -> [Int32] {
+        let channelCount = format.channelCount
+        let frameStride = format.blockAlignment
+        var samples = [Int32](repeating: 0, count: frameCount * channelCount)
+
+        data.withUnsafeBytes { rawBuffer in
+            let source = rawBuffer.bindMemory(to: UInt8.self)
+            samples.withUnsafeMutableBufferPointer { destination in
+                var outputIndex = 0
+                switch (format.bitsPerSample, format.isBigEndian) {
+                case (16, false):
+                    for frame in 0..<frameCount {
+                        var inputOffset = frame * frameStride
+                        for _ in 0..<channelCount {
+                            let raw = UInt16(source[inputOffset])
+                                | UInt16(source[inputOffset + 1]) << 8
+                            destination[outputIndex] = Int32(Int16(bitPattern: raw)) << 8
+                            inputOffset += 2
+                            outputIndex += 1
+                        }
+                    }
+                case (16, true):
+                    for frame in 0..<frameCount {
+                        var inputOffset = frame * frameStride
+                        for _ in 0..<channelCount {
+                            let raw = UInt16(source[inputOffset]) << 8
+                                | UInt16(source[inputOffset + 1])
+                            destination[outputIndex] = Int32(Int16(bitPattern: raw)) << 8
+                            inputOffset += 2
+                            outputIndex += 1
+                        }
+                    }
+                case (24, false):
+                    for frame in 0..<frameCount {
+                        var inputOffset = frame * frameStride
+                        for _ in 0..<channelCount {
+                            var raw = UInt32(source[inputOffset])
+                                | UInt32(source[inputOffset + 1]) << 8
+                                | UInt32(source[inputOffset + 2]) << 16
+                            if raw & 0x0080_0000 != 0 { raw |= 0xFF00_0000 }
+                            destination[outputIndex] = Int32(bitPattern: raw)
+                            inputOffset += 3
+                            outputIndex += 1
+                        }
+                    }
+                case (24, true):
+                    for frame in 0..<frameCount {
+                        var inputOffset = frame * frameStride
+                        for _ in 0..<channelCount {
+                            var raw = UInt32(source[inputOffset]) << 16
+                                | UInt32(source[inputOffset + 1]) << 8
+                                | UInt32(source[inputOffset + 2])
+                            if raw & 0x0080_0000 != 0 { raw |= 0xFF00_0000 }
+                            destination[outputIndex] = Int32(bitPattern: raw)
+                            inputOffset += 3
+                            outputIndex += 1
+                        }
+                    }
+                case (32, false):
+                    for frame in 0..<frameCount {
+                        var inputOffset = frame * frameStride
+                        for _ in 0..<channelCount {
+                            let raw = UInt32(source[inputOffset])
+                                | UInt32(source[inputOffset + 1]) << 8
+                                | UInt32(source[inputOffset + 2]) << 16
+                                | UInt32(source[inputOffset + 3]) << 24
+                            destination[outputIndex] = Int32(bitPattern: raw) >> 8
+                            inputOffset += 4
+                            outputIndex += 1
+                        }
+                    }
+                case (32, true):
+                    for frame in 0..<frameCount {
+                        var inputOffset = frame * frameStride
+                        for _ in 0..<channelCount {
+                            let raw = UInt32(source[inputOffset]) << 24
+                                | UInt32(source[inputOffset + 1]) << 16
+                                | UInt32(source[inputOffset + 2]) << 8
+                                | UInt32(source[inputOffset + 3])
+                            destination[outputIndex] = Int32(bitPattern: raw) >> 8
+                            inputOffset += 4
+                            outputIndex += 1
+                        }
+                    }
+                default:
+                    preconditionFailure("CAF format was not validated during initialization")
+                }
+            }
         }
+        return samples
     }
 
     private static func readExactly(_ handle: FileHandle, offset: UInt64, count: Int) throws -> Data {

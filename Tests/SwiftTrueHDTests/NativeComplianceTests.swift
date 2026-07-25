@@ -217,10 +217,10 @@ final class NativeComplianceTests: XCTestCase {
         ))
         XCTAssertFalse(manifest.contains("xyz-error"))
         XCTAssertTrue(log.contains("First frame of action: 00:00:00:00"))
-        XCTAssertTrue(log.contains("Spatial approximation"))
-        XCTAssertTrue(log.contains("Available spatial elements: 6"))
+        XCTAssertTrue(log.contains("Fixed-basis spatial approximation"))
+        XCTAssertTrue(log.contains("Fixed non-LFE rendering anchors: 13"))
         XCTAssertTrue(log.contains("Maximum quantized XYZ deviation: 0.12345678"))
-        XCTAssertTrue(log.contains("Grouped intervals: 2"))
+        XCTAssertTrue(log.contains("Rendering-basis assignment changes: 1"))
         XCTAssertFalse(log.contains("XYZ error"))
     }
 }

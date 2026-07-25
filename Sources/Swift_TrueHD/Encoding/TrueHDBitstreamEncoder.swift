@@ -359,12 +359,12 @@ final class TrueHDBitstreamEncoder {
         writer.write(0, count: 6) // heavy DRC start-up gain
         writer.write(8, count: 4) // stereo DRC control enabled by default
         writer.write(0, count: 7) // DRC start-up gain
-        writer.write(29, count: 6) // stereo dialogue normalization
+        writer.write(30, count: 6) // stereo dialogue normalization
         writer.write(29, count: 6) // stereo mix level
-        writer.write(23, count: 5) // 5.1 dialogue normalization
+        writer.write(24, count: 5) // 5.1 dialogue normalization
         writer.write(35, count: 6) // 5.1 mix level
         writer.write(0, count: 5) // 5.1 source format
-        writer.write(23, count: 5) // 7.1 dialogue normalization
+        writer.write(24, count: 5) // 7.1 dialogue normalization
         writer.write(35, count: 6) // 7.1 mix level
         writer.write(0, count: 6) // 7.1 source format
         writer.write(0, count: 1)

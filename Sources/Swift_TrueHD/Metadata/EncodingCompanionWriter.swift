@@ -34,17 +34,16 @@ enum EncodingCompanionWriter {
             : 0
         let spatialAnalysis: String
         if let accuracy = result.spatialAccuracy {
-            let spatialElementCount = max(0, result.spatialClusterCount - 8)
+            let renderingAnchorCount = max(0, result.spatialClusterCount - 1)
             spatialAnalysis = """
 
-        Spatial approximation
-          Available spatial elements: \(spatialElementCount)
+        Fixed-basis spatial approximation
+          Fixed non-LFE rendering anchors: \(renderingAnchorCount)
           Metadata intervals: \(accuracy.intervalCount)
           Maximum active spatial sources: \(accuracy.maximumActiveSpatialSources)
-          Grouped intervals: \(accuracy.groupedIntervalCount)
           Source-interval observations: \(accuracy.sourceIntervalCount)
-          Exact before OAMD quantization: \(accuracy.exactlyRepresentedSourceIntervals)
-          Continuous-source assignment changes: \(accuracy.assignmentChangeCount)
+          Exactly represented source intervals: \(accuracy.exactlyRepresentedSourceIntervals)
+          Rendering-basis assignment changes: \(accuracy.assignmentChangeCount)
           Maximum quantized XYZ deviation: \(String(format: "%.8f", accuracy.maximumQuantizedPositionError))
           Energy-weighted RMS quantized XYZ deviation: \(String(format: "%.8f", accuracy.energyWeightedRMSQuantizedPositionError))
         """

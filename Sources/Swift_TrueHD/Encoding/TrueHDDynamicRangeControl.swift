@@ -92,7 +92,7 @@ struct TrueHDDynamicRangeControl {
             }
 
             let levelDB = 20 * log10(max(envelopeLevels[presentation], 1e-10))
-            let dialogueNormalization = presentation == 0 ? 29 : 23
+            let dialogueNormalization = presentation == 0 ? 30 : 24
             let targetDB = profile.gainDB(
                 forWeightedLevel: levelDB,
                 dialogueNormalization: dialogueNormalization

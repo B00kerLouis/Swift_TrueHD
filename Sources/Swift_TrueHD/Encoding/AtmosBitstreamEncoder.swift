@@ -501,7 +501,6 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             frameCount: inputFrameCount
         )
         let spatialAccuracy = spatialCoder.spatialAccuracyReport()
-        spatialCoder.setAdditionalHeadroomShift(elementCache.headroomShift)
         let cachedElements = try FileHandle(forReadingFrom: elementCache.url)
         defer {
             try? cachedElements.close()
@@ -554,6 +553,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                 Array(rawBuffer.bindMemory(to: Int64.self))
             }
             let batchStartFrame = sourceFrame
+            let batchGainOffset = Int(batchStartFrame - sourceTiming.inputStartFrame)
             let spatialBlockCount = (requestedFrames + Self.samplesPerAccessUnit - 1)
                 / Self.samplesPerAccessUnit
             let spatialStore = PreparedAtmosSpatialStore(count: spatialBlockCount)
@@ -570,9 +570,12 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                     )
                     let sampleStart = frameOffset * encodedChannelCount
                     let sampleEnd = (frameOffset + blockFrameCount) * encodedChannelCount
+                    let gainStart = batchGainOffset + frameOffset
+                    let gainEnd = gainStart + blockFrameCount
                     let blockSourceFrame = batchStartFrame + UInt64(frameOffset)
                     let standardSamples = spatialCoder.quantize(
-                        unscaledSamples: Array(unscaledElements[sampleStart..<sampleEnd])
+                        unscaledSamples: Array(unscaledElements[sampleStart..<sampleEnd]),
+                        limiterGains: elementCache.limiterGains[gainStart..<gainEnd]
                     )
                     let quantizedSamples = AtmosCompatibilityMatrix.transportSamples(
                         standardSamples: standardSamples,
@@ -1008,19 +1011,19 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         writer.write(0, count: 6) // heavy DRC start-up gain
         writer.write(8, count: 4) // stereo DRC control enabled by default
         writer.write(0, count: 7) // DRC start-up gain
+        writer.write(30, count: 6)
         writer.write(29, count: 6)
-        writer.write(29, count: 6)
-        writer.write(23, count: 5)
+        writer.write(24, count: 5)
         writer.write(35, count: 6)
         writer.write(0, count: 5)
-        writer.write(23, count: 5)
+        writer.write(24, count: 5)
         writer.write(35, count: 6)
         writer.write(0, count: 6)
         writer.write(0, count: 1)
         writer.write(1, count: 1) // extra channel meaning follows
 
         writer.write(1, count: 4) // 32 bits including this length field
-        writer.write(23, count: 5)
+        writer.write(24, count: 5)
         writer.write(35, count: 6)
         writer.write(UInt64(encodedChannelCount - 1), count: 5)
         writer.write(1, count: 1) // dynamic objects only
