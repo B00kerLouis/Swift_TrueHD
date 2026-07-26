@@ -63,16 +63,22 @@ private struct TurehdaCLI {
             throw CLIError.missingRequiredArguments
         }
 
-        let result = try await TrueHDEncoder().encode(
-            inputURL: URL(fileURLWithPath: input),
-            outputURL: URL(fileURLWithPath: output),
-            configuration: configuration,
-            progress: { progress in
-                let percent = Int(progress.fractionCompleted * 100)
-                FileHandle.standardError.write(Data("\rEncoding \(percent)%".utf8))
-            }
-        )
-        FileHandle.standardError.write(Data("\n".utf8))
+        let progressBar = TerminalProgressBar()
+        let result: TrueHDEncodingResult
+        do {
+            result = try await TrueHDEncoder().encode(
+                inputURL: URL(fileURLWithPath: input),
+                outputURL: URL(fileURLWithPath: output),
+                configuration: configuration,
+                progress: { progress in
+                    progressBar.update(with: progress)
+                }
+            )
+        } catch {
+            progressBar.finish()
+            throw error
+        }
+        progressBar.finish()
         print("Wrote \(result.outputByteCount) bytes to \(result.outputURL.path)")
         print("DRC profile: \(result.drcProfile.commandLineName)")
         if let frameRate = result.outputFrameRate {
@@ -146,6 +152,55 @@ private struct TurehdaCLI {
                                                music_light|speech (default: film_light)
             """
         )
+    }
+}
+
+/// Draws a single interactive terminal progress line without polluting redirected logs.
+private final class TerminalProgressBar: @unchecked Sendable {
+    private let lock = NSLock()
+    private let errorHandle = FileHandle.standardError
+    private let isInteractive: Bool
+    private var lastPercent = -1
+    private var hasRendered = false
+
+    init() {
+        isInteractive = isatty(errorHandle.fileDescriptor) == 1
+    }
+
+    func update(with progress: TrueHDEncodingProgress) {
+        guard isInteractive else { return }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        let percent = min(100, Int((progress.fractionCompleted * 100).rounded(.down)))
+        guard percent != lastPercent else { return }
+        lastPercent = percent
+
+        let width = 40
+        let filled = percent * width / 100
+        let bar = String(repeating: "█", count: filled)
+            + String(repeating: "░", count: width - filled)
+        let megabytes = Double(progress.encodedBytes) / 1_048_576
+        let status = String(
+            format: "\u{001B}[2K\rEncoding [\(bar)] %3d%%  %llu/%llu AU  %.1f MiB",
+            percent,
+            progress.completedFrames,
+            progress.totalFrames,
+            megabytes
+        )
+        errorHandle.write(Data(status.utf8))
+        hasRendered = true
+    }
+
+    func finish() {
+        guard isInteractive else { return }
+
+        lock.lock()
+        defer { lock.unlock() }
+        guard hasRendered else { return }
+        errorHandle.write(Data("\n".utf8))
+        hasRendered = false
     }
 }
 

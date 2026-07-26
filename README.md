@@ -157,6 +157,10 @@ rate. `--ffoa` describes the output timeline and does not silently trim the
 input master. Removed or unknown options are rejected instead of being ignored.
 An existing output path is never overwritten implicitly.
 
+During an interactive encode, `turehda` draws one 40-cell terminal progress
+bar with the access-unit count and output size. It writes no incremental
+progress records when stderr is redirected, keeping CI and log output clean.
+
 ## Dynamic range control profiles
 
 `--drc-profile` selects genuine TrueHD DRC gain metadata; it is not an encode
