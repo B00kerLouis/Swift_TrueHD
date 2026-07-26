@@ -4,6 +4,7 @@
 Build/
 DerivedData/
 tmp/
+Tests/
 
 *.xcuserstate
 **/xcuserdata/

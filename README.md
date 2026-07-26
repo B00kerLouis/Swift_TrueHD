@@ -42,10 +42,12 @@ time.
 The native encoder computes the one-byte Evolution primary protection
 with HMAC-SHA256 over the complete AU prefix and canonical Evolution frame. The
 implementation matches both its unit vector and the supplied Dolby stream's
-first-AU protection value. If measured peak-rate rewriting changes an
-authenticated AU prefix, the encoder reauthenticates the Evolution frame and
-recomputes protected-section parity. The all-native FBA fourth substream and its
-16-channel presentation pass complete Dolby Reference Player playback.
+first-AU protection value. Final transport planning writes the declared peak
+rate and the decoder-buffer input schedule into every access-unit prefix. When
+that changes an authenticated prefix, the encoder reauthenticates the Evolution
+frame and recomputes protected-section parity. The all-native FBA fourth
+substream and its 16-channel presentation pass complete Dolby Reference Player
+playback.
 
 ## Entropy Coding and Performance
 
@@ -190,6 +192,31 @@ elementary stream:
 
 Raw encoder output must use the `.mlp` extension. When muxing to Matroska, the
 audio track must use codec ID `A_TRUEHD`; the raw MLP payload is not modified.
+
+### Matroska timestamp precision
+
+A 48 kHz TrueHD access unit represents 40 samples, or 0.833333 ms. Matroska's
+common 1 ms timestamp scale cannot represent that cadence: consecutive packets
+receive duplicate PTS values and some real-time players stutter or drift against
+video. This is a container timestamp problem and cannot be corrected by changing
+the compliant elementary-stream cadence.
+
+Use `mkvmerge` with an explicit microsecond timestamp scale. Specifying the scale
+is necessary even when using `mkvmerge`, because an existing 1 ms Matroska video
+input can otherwise cause the output to retain that coarse scale:
+
+```sh
+mkvmerge \
+  --timestamp-scale 1000 \
+  -o output.mkv \
+  video-input.mkv \
+  output.mlp
+```
+
+Do not use FFmpeg's default Matroska mux settings for this elementary stream:
+they currently select a 1 ms time base. Verify a delivery with
+`ffprobe -show_packets`; TrueHD PTS values must be strictly increasing at the
+1/1200-second AU cadence.
 
 ## Swift API
 

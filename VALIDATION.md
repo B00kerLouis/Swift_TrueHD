@@ -6,6 +6,45 @@ Reference Player (DRP), and FFmpeg's independent TrueHD parser. Project
 artifacts are produced by the native Swift encoder; the installed reference
 encoder is used only as an isolated acceptance oracle.
 
+## Transport timing and Matroska regression
+
+The 2026-07-27 investigation compared every access unit in supplied DEE output
+with native output. MLP `input_timing` is a decoder transport schedule, not a
+copy of the fixed 40-sample output cadence. For access unit `n`, byte count `B`,
+and declared 3 kbps peak-rate code `C`, the validated schedule uses
+`ceil(B * 128 / C)` input samples and propagates non-overlap backwards across
+future access units. DEE chooses the lowest `C` that keeps the complete schedule
+within its 3,600-sample (75 ms at 48 kHz) decoder-buffer window.
+
+The model matched all 111,700 `input_timing` fields in the supplied ARI DEE
+stream. That file declares code 3020 (9.060 Mbps) and reaches a 3,533-sample
+lead; code 3019 reaches 3,611 and is therefore rejected. The earlier native
+candidate declared code 4468 (13.404 Mbps) and emitted the trivial 40-sample
+schedule, which did not reproduce DEE's buffered transport pacing.
+
+The corrected full ARI Atmos encode contains 111,700 access units and 4,468,000
+samples (93.083333 seconds). It declares code 3883 (11.649 Mbps), reaches 3,597
+samples of lead, and code 3882 exceeds the window at 3,601. A complete audit
+found zero transport-timing, access-header parity, Evolution length/parity, or
+HMAC mismatches. FFmpeg identifies the result as `Dolby TrueHD + Dolby Atmos`;
+the raw stream and its `mkvmerge` Matroska copy decode to the same PCM MD5,
+`7240b73d5b1e17bd260453a38155e012`.
+
+Container timestamp precision is a separate failure mode. A TrueHD AU lasts
+40/48,000 seconds (0.833333 ms), while FFmpeg's default Matroska mux uses a 1 ms
+time base. The resulting packet sequence begins `0, 1, 2, 3, 3, 4 ...` ms and
+the 93.083333-second stream is rounded to 93.084 seconds. A 24 fps regression
+with 48 video packets and 2,400 TrueHD packets passed when muxed with:
+
+```sh
+mkvmerge --timestamp-scale 1000 -o output.mkv video-input.mkv output.mlp
+```
+
+The resulting 1 microsecond time base preserves strictly increasing audio PTS,
+all 48 video frames remain at 24/1, and pre-/post-mux decoded PCM hashes match.
+The option must be explicit because `mkvmerge` can inherit a coarse scale from
+an existing Matroska video input.
+
 ## More-than-eight-channel playback regression
 
 The 2026-07-22 regression candidate was rebuilt from the current Release

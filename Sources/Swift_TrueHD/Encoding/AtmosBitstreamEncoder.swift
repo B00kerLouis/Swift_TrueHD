@@ -485,9 +485,10 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         }
 
         let output = try FileHandle(forWritingTo: outputURL)
+        var outputIsOpen = true
         var completed = false
         defer {
-            try? output.close()
+            if outputIsOpen { try? output.close() }
             if !completed { try? fileManager.removeItem(at: outputURL) }
         }
 
@@ -512,8 +513,8 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         var outputBuffer = Data()
         outputBuffer.reserveCapacity(1_048_576)
         var bytesWritten: UInt64 = 0
-        var maximumInstantaneousRate = 0
-        var majorSyncOffsets = [UInt64]()
+        var accessUnitRecords = [MLPAccessUnitRecord]()
+        accessUnitRecords.reserveCapacity(Int(totalAccessUnits))
         var frameIndex: UInt64 = 0
         var sourceFrame: UInt64 = sourceTiming.inputStartFrame
         var intervalLosslessChecks = [UInt32](repeating: 0, count: 4)
@@ -754,8 +755,12 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                         required: instantaneousRate, limit: peakBitRate
                     )
                 }
-                maximumInstantaneousRate = max(maximumInstantaneousRate, instantaneousRate)
-                if item.restartFrame { majorSyncOffsets.append(bytesWritten + 4) }
+                accessUnitRecords.append(
+                    MLPAccessUnitRecord(
+                        offset: bytesWritten,
+                        byteCount: accessUnit.count
+                    )
+                )
                 outputBuffer.append(contentsOf: accessUnit)
                 bytesWritten += UInt64(accessUnit.count)
 
@@ -778,10 +783,20 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
 
         if !outputBuffer.isEmpty { try output.write(contentsOf: outputBuffer) }
         try output.synchronize()
-        try rewriteMajorSyncPeakRate(
+        try output.close()
+        outputIsOpen = false
+        let transportPlan = try MLPTransportTiming.makePlan(
+            byteCounts: accessUnitRecords.map(\.byteCount)
+        )
+        try MLPTransportRewriter.rewrite(
             outputURL: outputURL,
-            offsets: majorSyncOffsets,
-            actualPeakBitRate: maximumInstantaneousRate
+            records: accessUnitRecords,
+            plan: transportPlan,
+            majorSync: makeMajorSync(
+                declaredCodedPeakRate: transportPlan.codedPeakRate
+            ),
+            substreamCount: 4,
+            authenticateEvolution: true
         )
         completed = true
         return TrueHDEncodingResult(
@@ -985,7 +1000,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         return headerBytes + body
     }
 
-    private func makeMajorSync(declaredPeakBitRate: Int? = nil) -> [UInt8] {
+    private func makeMajorSync(declaredCodedPeakRate: Int? = nil) -> [UInt8] {
         var writer = BitWriter(reservingCapacity: 32)
         writer.write(0xF8726FBA, count: 32)
         writer.write(0, count: 4) // 48 kHz
@@ -1001,8 +1016,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         writer.write(0x1000, count: 16) // Evolution metadata is present
         writer.write(0, count: 16)
         writer.write(1, count: 1)
-        let rate = declaredPeakBitRate ?? peakBitRate
-        let codedPeak = Self.codedPeakRate(rate)
+        let codedPeak = declaredCodedPeakRate ?? Self.codedPeakRate(peakBitRate)
         writer.write(UInt64(codedPeak), count: 15)
         writer.write(4, count: 4)
         writer.write(3, count: 4)
@@ -1096,68 +1110,6 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             }
         }
         return seed
-    }
-
-    private func rewriteMajorSyncPeakRate(
-        outputURL: URL,
-        offsets: [UInt64],
-        actualPeakBitRate: Int
-    ) throws {
-        guard !offsets.isEmpty, actualPeakBitRate > 0 else { return }
-        let majorSync = makeMajorSync(declaredPeakBitRate: actualPeakBitRate)
-        let output = try FileHandle(forUpdating: outputURL)
-        defer { try? output.close() }
-        for offset in offsets {
-            let accessUnitOffset = offset - 4
-            try output.seek(toOffset: accessUnitOffset)
-            guard let header = try output.read(upToCount: 4), header.count == 4 else {
-                throw TrueHDError.invalidConfiguration(
-                    "Could not read an access-unit header while updating peak rate"
-                )
-            }
-            let lengthInWords = (Int(header[0] & 0x0F) << 8) | Int(header[1])
-            let accessUnitByteCount = lengthInWords * 2
-            try output.seek(toOffset: accessUnitOffset)
-            guard let data = try output.read(upToCount: accessUnitByteCount),
-                  data.count == accessUnitByteCount else {
-                throw TrueHDError.invalidConfiguration(
-                    "Could not read a complete access unit while updating peak rate"
-                )
-            }
-            var accessUnit = Array(data)
-            precondition(accessUnit[4..<8].elementsEqual([0xF8, 0x72, 0x6F, 0xBA]))
-            accessUnit.replaceSubrange(4..<36, with: majorSync)
-
-            let directoryOffset = 36
-            var entryOffset = directoryOffset
-            var fourthDirectoryWord: UInt16 = 0
-            for substream in 0..<4 {
-                guard entryOffset + 1 < accessUnit.count else {
-                    throw TrueHDError.malformedBitstream(
-                        "Substream directory ended while updating peak rate"
-                    )
-                }
-                let entry = (UInt16(accessUnit[entryOffset]) << 8)
-                    | UInt16(accessUnit[entryOffset + 1])
-                if substream == 3 { fourthDirectoryWord = entry }
-                entryOffset += entry & 0x8000 == 0 ? 2 : 4
-            }
-            let extraDataOffset = entryOffset
-                + Int(fourthDirectoryWord & 0x0FFF) * 2
-            if extraDataOffset < accessUnit.count {
-                let prefix = Array(accessUnit[..<extraDataOffset])
-                let wrappedEvolution = Array(accessUnit[extraDataOffset...])
-                let authenticated = AtmosMetadataWriter.reauthenticateWrappedEvolution(
-                    wrappedEvolution, accessUnitPrefix: prefix
-                )
-                precondition(authenticated.count == wrappedEvolution.count)
-                accessUnit.replaceSubrange(extraDataOffset..., with: authenticated)
-            }
-
-            try output.seek(toOffset: accessUnitOffset)
-            try output.write(contentsOf: accessUnit)
-        }
-        try output.synchronize()
     }
 
     private func makeSubstream(

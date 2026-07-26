@@ -69,9 +69,10 @@ final class TrueHDBitstreamEncoder {
         }
 
         let output = try FileHandle(forWritingTo: outputURL)
+        var outputIsOpen = true
         var completed = false
         defer {
-            try? output.close()
+            if outputIsOpen { try? output.close() }
             if !completed {
                 try? fileManager.removeItem(at: outputURL)
             }
@@ -85,6 +86,8 @@ final class TrueHDBitstreamEncoder {
         var outputBuffer = Data()
         outputBuffer.reserveCapacity(1_048_576)
         var bytesWritten: UInt64 = 0
+        var accessUnitRecords = [MLPAccessUnitRecord]()
+        accessUnitRecords.reserveCapacity(Int(totalAccessUnits))
         var frameIndex: UInt64 = 0
         var intervalLosslessChecks: [UInt32] = [0, 0, 0]
         var highResolutionTimingWriter = HighResolutionTimingWriter()
@@ -144,6 +147,20 @@ final class TrueHDBitstreamEncoder {
                 highResolutionTiming: highResolutionTiming,
                 drcUpdates: drcUpdates
             )
+            let instantaneousRate = accessUnit.count * 8 * reader.format.sampleRate
+                / Self.samplesPerAccessUnit
+            guard instantaneousRate <= peakBitRate else {
+                throw TrueHDError.peakBitRateExceeded(
+                    required: instantaneousRate,
+                    limit: peakBitRate
+                )
+            }
+            accessUnitRecords.append(
+                MLPAccessUnitRecord(
+                    offset: bytesWritten,
+                    byteCount: accessUnit.count
+                )
+            )
             outputBuffer.append(contentsOf: accessUnit)
             bytesWritten += UInt64(accessUnit.count)
 
@@ -183,6 +200,21 @@ final class TrueHDBitstreamEncoder {
             try output.write(contentsOf: outputBuffer)
         }
         try output.synchronize()
+        try output.close()
+        outputIsOpen = false
+        let transportPlan = try MLPTransportTiming.makePlan(
+            byteCounts: accessUnitRecords.map(\.byteCount)
+        )
+        try MLPTransportRewriter.rewrite(
+            outputURL: outputURL,
+            records: accessUnitRecords,
+            plan: transportPlan,
+            majorSync: makeMajorSync(
+                declaredCodedPeakRate: transportPlan.codedPeakRate
+            ),
+            substreamCount: 3,
+            authenticateEvolution: false
+        )
         completed = true
 
         return TrueHDEncodingResult(
@@ -333,7 +365,7 @@ final class TrueHDBitstreamEncoder {
         return result
     }
 
-    private func makeMajorSync() -> [UInt8] {
+    private func makeMajorSync(declaredCodedPeakRate: Int? = nil) -> [UInt8] {
         var writer = BitWriter(reservingCapacity: 28)
         writer.write(0xF8726F, count: 24)
         writer.write(0xBA, count: 8)
@@ -350,7 +382,8 @@ final class TrueHDBitstreamEncoder {
         writer.write(0, count: 16)
         writer.write(0, count: 16)
         writer.write(1, count: 1) // variable bit rate
-        let codedPeak = max(1, ((peakBitRate << 4) - 8) / 48_000)
+        let codedPeak = declaredCodedPeakRate
+            ?? MLPTransportTiming.maximumCodedPeakRate
         writer.write(UInt64(codedPeak), count: 15)
         writer.write(3, count: 4) // 2-, 6-, and 8-channel cumulative substreams
         writer.write(0, count: 2)
