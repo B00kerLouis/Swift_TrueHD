@@ -1,0 +1,122 @@
+name: Native encoder and decoder builds
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  macos:
+    name: macOS Xcode encoder and decoder
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select tested Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+      - name: Build encoder and independent decoder targets
+        run: |
+          xcodebuild -version
+          xcodebuild -project Swift_TrueHD.xcodeproj -scheme all -configuration Release -destination 'generic/platform=macOS' -derivedDataPath Build/EncoderDerived CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -project Swift_TrueHD.xcodeproj -scheme decoder_cli -configuration Release -destination 'generic/platform=macOS' -derivedDataPath Build/DecoderDerived CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -project Swift_TrueHD.xcodeproj -scheme decoder_framework -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath Build/DecoderDerived CODE_SIGNING_ALLOWED=NO build
+          lipo -info Build/Products/Release/turehda
+          lipo -info Build/Products/Release/truehdd
+          otool -L Build/Products/Release/truehdd
+      - name: C and C++ policy and renderer tests
+        run: |
+          cmake -S . -B Build/Portable -DCMAKE_BUILD_TYPE=Release
+          cmake --build Build/Portable --parallel 3
+          ctest --test-dir Build/Portable --output-on-failure
+      - name: Generate and validate an actual encoder fixture
+        run: |
+          mkdir -p Build/fixture
+          Build/Portable/decoder_tests --generate Build/fixture/source.wav Build/fixture/source
+          Build/Products/Release/turehda -i Build/fixture/source.wav -o Build/fixture/synthetic.mlp
+          Build/Portable/decoder_tests --stream Build/fixture/synthetic.mlp Build/fixture/source
+          Build/Products/Release/truehdd -i Build/fixture/synthetic.mlp -o Build/fixture/decoded.pcm --presentation 8 --format s24le
+          cmp Build/fixture/decoded.pcm Build/fixture/source.8.pcm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: decoder-test-fixture
+          path: |
+            Build/fixture/synthetic.mlp
+            Build/fixture/source.8.pcm
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-native-products
+          path: |
+            Build/Products/Release/turehda
+            Build/Products/Release/truehdd
+            Build/Products/Release/libtruehda.framework
+            Build/Products/Release/libtruehdd.framework
+          if-no-files-found: error
+  windows:
+    name: Windows MSVC decoder
+    runs-on: windows-2022
+    needs: macos
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: decoder-test-fixture
+          path: Build/fixture
+      - name: Build native WASAPI and Spatial Audio decoder
+        run: |
+          cmake -S . -B Build/Portable -A x64
+          cmake --build Build/Portable --config Release --parallel 3
+          ctest --test-dir Build/Portable -C Release --output-on-failure
+          & Build/Portable/Release/decoder_tests.exe --stream Build/fixture/synthetic.mlp Build/fixture/source
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & Build/Portable/Release/truehdd.exe -i Build/fixture/synthetic.mlp -o Build/fixture/decoded.pcm --presentation 8 --format s24le
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ((Get-FileHash Build/fixture/decoded.pcm).Hash -ne (Get-FileHash Build/fixture/source.8.pcm).Hash) { throw 'PCM mismatch' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-decoder-products
+          path: |
+            Build/Portable/Release/truehdd.exe
+            Build/Portable/Release/decoder_framework.lib
+          if-no-files-found: error
+  linux:
+    name: Linux GCC and PipeWire decoder
+    runs-on: ubuntu-24.04
+    needs: macos
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: decoder-test-fixture
+          path: Build/fixture
+      - name: Install native audio build and test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpipewire-0.3-dev libasound2-dev pipewire pipewire-bin wireplumber dbus
+      - name: Build and validate decoder and native channel plans
+        run: |
+          cmake -S . -B Build/Portable -DCMAKE_BUILD_TYPE=Release
+          cmake --build Build/Portable --parallel 3
+          ctest --test-dir Build/Portable --output-on-failure
+          Build/Portable/decoder_tests --stream Build/fixture/synthetic.mlp Build/fixture/source
+          Build/Portable/truehdd -i Build/fixture/synthetic.mlp -o Build/fixture/decoded.pcm --presentation 8 --format s24le
+          cmp Build/fixture/decoded.pcm Build/fixture/source.8.pcm
+      - name: Exercise actual PipeWire playback for all layouts
+        run: dbus-run-session -- bash .github/scripts/test-pipewire.sh "$PWD/Build/Portable/audio_smoke"
+      - name: Address and undefined behavior sanitizers
+        run: |
+          cmake -S . -B Build/Sanitized -DCMAKE_BUILD_TYPE=Debug -DSTHD_NATIVE_DEVICE=OFF -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+          cmake --build Build/Sanitized --parallel 3
+          ctest --test-dir Build/Sanitized --output-on-failure
+          Build/Sanitized/decoder_tests --stream Build/fixture/synthetic.mlp Build/fixture/source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-decoder-products
+          path: |
+            Build/Portable/truehdd
+            Build/Portable/libdecoder_framework.a
+          if-no-files-found: error

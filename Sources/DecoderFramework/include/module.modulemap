@@ -1,0 +1,5 @@
+framework module libtruehdd {
+    umbrella header "TrueHDDecoder.h"
+    export *
+    module * { export * }
+}
