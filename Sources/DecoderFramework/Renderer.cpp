@@ -267,6 +267,29 @@ STHDStatus sthd_render(const STHDFrame *f, const STHDLayout *l, float gain, floa
             }
         return STHD_OK;
     }
+    unsigned ground_channels = 0;
+    for (unsigned c = 0; c < l->channels; ++c)
+        if (l->speakers[c] <= STHD_SR)
+            ++ground_channels;
+    if (f->presentations == 3 && ground_channels == 6) {
+        // Adding silent height outputs must not change the 5.1 bed downmix
+        // gain relative to a six-channel device playing the same plain bed.
+        constexpr double surround_gain = 0.7071067811865475244;
+        for (unsigned n = 0; n < f->samples; ++n)
+            for (unsigned c = 0; c < l->channels; ++c) {
+                const int32_t *v = f->pcm[2] + n * 8;
+                auto speaker = l->speakers[c];
+                double value = 0;
+                if (speaker == STHD_SL || speaker == STHD_BL)
+                    value = surround_gain * (double(v[4]) + v[6]);
+                else if (speaker == STHD_SR || speaker == STHD_BR)
+                    value = surround_gain * (double(v[5]) + v[7]);
+                else if (speaker <= STHD_LFE)
+                    value = v[unsigned(speaker)];
+                out[n * l->channels + c] = float(value * scale);
+            }
+        return STHD_OK;
+    }
     bool top = false;
     for (unsigned i = 0; i < l->channels; ++i)
         if (l->speakers[i] >= STHD_TFL && l->speakers[i] <= STHD_TMR)

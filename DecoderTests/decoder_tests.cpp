@@ -274,6 +274,21 @@ void audio_policy_tests() {
     STHDLayout stereo{}, five{};
     sthd_layout_named("2.0", &stereo);
     sthd_layout_named("5.1", &five);
+    for (const char *name : {"5.1.2", "5.1.4", "5.1.2(back)", "5.1.4(back)"}) {
+        STHDLayout extended{};
+        sthd_layout_named(name, &extended);
+        f.pcm[2][4] = 4194304;
+        f.pcm[2][6] = 2097152;
+        expect(sthd_render(&f, &five, 1, out.data(), out.size()) == STHD_OK, "base 5.1 reference");
+        auto reference = out;
+        expect(sthd_render(&f, &extended, 1, out.data(), out.size()) == STHD_OK,
+               "silent-height extended bed");
+        for (unsigned c = 0; c < 6; ++c)
+            expect(out[c] == reference[c], "height extension preserves ground downmix gain");
+        for (unsigned c = 6; c < extended.channels; ++c)
+            expect(out[c] == 0, "plain bed has no height signal");
+        f.pcm[2][4] = f.pcm[2][6] = 0;
+    }
     for (unsigned source : {2U, 4U, 6U}) {
         f.pcm[2][source] = 4194304;
         expect(sthd_render(&f, &stereo, 1, out.data(), out.size()) == STHD_OK && out[0] > 0.35f,

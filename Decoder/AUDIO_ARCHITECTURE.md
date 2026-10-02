@@ -26,7 +26,7 @@ PipeWire backend 从 registry 查 default metadata、sink 当前 format/profile 
 
 ## 普通 7.1 下混修正
 
-原项目 plain encoder 的前三层是累积声道子集，第一层没有包含全部中心、侧与后环绕的 downmix。解码仍恢复所有原始层；渲染普通 7.1 到 stereo/5.1 时改从完整 7.1 bed 做显式下混：中心和 surround 使用 -3 dB 系数，5.1 将对应 side/rear 合并，stereo 不混入 LFE。高度布局不虚构高度信号。`--presentation` 原始提取行为不变。
+原项目 plain encoder 的前三层是累积声道子集，第一层没有包含全部中心、侧与后环绕的 downmix。解码仍恢复所有原始层；渲染普通 7.1 到 stereo/5.1 时改从完整 7.1 bed 做显式下混：中心和 surround 使用 -3 dB 系数，5.1 将对应 side/rear 合并，stereo 不混入 LFE。高度布局不虚构高度信号；plain 7.1 到 5.1.2/5.1.4 的地面下混与 5.1 保持相同电平，高度扩展不改变 bed 增益。`--presentation` 原始提取行为不变。
 
 Atmos 的 2/6/8 兼容呈现具有 encoder 提供的完整逆矩阵，继续使用这些 bit-accurate presentations。下混、空间渲染与输出量化可能产生额外峰值，文件输出报告 clipped samples；播放增益由用户明确控制，不自动修改无损解码结果。
 
