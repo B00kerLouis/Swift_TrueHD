@@ -10,6 +10,11 @@ pw_pid=$!
 wireplumber > "$XDG_RUNTIME_DIR/wireplumber.log" 2>&1 &
 wp_pid=$!
 cleanup() {
+  result=$?
+  if [[ "$result" -ne 0 ]]; then
+    cat "$XDG_RUNTIME_DIR/pipewire.log" "$XDG_RUNTIME_DIR/wireplumber.log" || true
+    pw-dump || true
+  fi
   kill "$wp_pid" "$pw_pid" 2>/dev/null || true
   wait "$wp_pid" "$pw_pid" 2>/dev/null || true
 }

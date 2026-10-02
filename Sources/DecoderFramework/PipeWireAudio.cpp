@@ -74,6 +74,7 @@ struct Query {
     char preferred[256]{};
     std::atomic<int> done{-1};
     std::atomic<bool> failed{false};
+    char error[256]{};
     ~Query() {
         if (loop)
             pw_thread_loop_stop(loop);
@@ -91,11 +92,19 @@ struct Query {
         if (loop)
             pw_thread_loop_destroy(loop);
     }
-    static void core_done(void *d, uint32_t, int sequence) {
-        static_cast<Query *>(d)->done.store(sequence);
+    static void core_done(void *d, uint32_t id, int sequence) {
+        if (id == PW_ID_CORE)
+            static_cast<Query *>(d)->done.store(sequence);
     }
-    static void core_error(void *d, uint32_t, int, int, const char *) {
-        static_cast<Query *>(d)->failed.store(true);
+    static void core_error(void *d, uint32_t id, int, int result, const char *message) {
+        // An idle node may have no active Format parameter. Such a node-local
+        // enumeration error does not mean the server connection is unusable.
+        if (id != PW_ID_CORE)
+            return;
+        auto &q = *static_cast<Query *>(d);
+        std::snprintf(q.error, sizeof(q.error), "core error %d: %s", result,
+                      message ? message : "");
+        q.failed.store(true);
     }
     static void node_param(void *d, int, uint32_t id, uint32_t, uint32_t, const spa_pod *pod) {
         auto &n = *static_cast<Node *>(d);
@@ -263,8 +272,11 @@ struct Query {
 };
 STHDStatus pipewire_capabilities(STHDAudioCapabilities &c) {
     Query q;
-    if (!q.open())
+    if (!q.open()) {
+        std::snprintf(c.endpoint, sizeof(c.endpoint), "PipeWire discovery failed: %s",
+                      q.error[0] ? q.error : "server connect/sync unavailable");
         return STHD_DEVICE_UNAVAILABLE;
+    }
     pw_thread_loop_lock(q.loop);
     Query::Node *selected = nullptr;
     for (auto &n : q.nodes)
@@ -283,6 +295,10 @@ STHDStatus pipewire_capabilities(STHDAudioCapabilities &c) {
         c.pcm_layout_valid = layout(selected->format, c.pcm_layout);
         std::snprintf(c.endpoint, sizeof(c.endpoint), "%s", selected->name);
     }
+    if (!selected)
+        std::snprintf(c.endpoint, sizeof(c.endpoint),
+                      "No matching default PipeWire sink (nodes=%zu, default=%s)", q.nodes.size(),
+                      q.preferred);
     pw_thread_loop_unlock(q.loop);
     return selected ? STHD_OK : STHD_DEVICE_UNAVAILABLE;
 }

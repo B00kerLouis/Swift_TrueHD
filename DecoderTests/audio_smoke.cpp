@@ -7,7 +7,7 @@ int main(int argc, char **argv) {
     STHDAudioCapabilities caps{};
     auto status = sthd_audio_capabilities(&caps);
     if (status != STHD_OK) {
-        std::cerr << "No native endpoint\n";
+        std::cerr << "No native endpoint: " << caps.endpoint << "\n";
         return 77;
     }
     STHDFrame frame{};
