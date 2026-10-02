@@ -34,7 +34,7 @@ Atmos 的 2/6/8 兼容呈现具有 encoder 提供的完整逆矩阵，继续使�
 
 每个 player 有 16,384-frame SPSC ring，最多 16 channels（1 MiB）。Decoder/renderer 在 producer 运行；CoreAudio/PipeWire callbacks 只读 FIFO、拷贝或补静音，不分配、不解码、不做文件 I/O。Windows 所有 COM audio 对象在同一个 MTA render thread 创建和使用。开播前预缓冲 2,048 frames；短节目在 drain 时启动；停止先终止 native callback/thread，再销毁 FIFO。
 
-write 与 drain 有 timeout，输出设备变化或协商失败报错，不能偷偷改到另一个 channel layout。通过 `sthd_audio_stats` 可观测 submitted/consumed frames、underruns；`sthd_audio_error` 提供 native 错误。Frame 最后实际采样数用于播放，不能把 40-sample padding 当成节目音频。
+write 与 drain 有 timeout，CoreAudio 监听默认设备和布局变化；drain 包含 converter、device、stream latency 和 buffer/safety offset。输出设备变化或协商失败报错，不能偷偷改到另一个 channel layout。通过 `sthd_audio_stats` 可观测 submitted/consumed frames、underruns；`sthd_audio_error` 提供 native 错误。Frame 最后实际采样数用于播放，不能把 40-sample padding 当成节目音频。
 
 ## 方案选择
 

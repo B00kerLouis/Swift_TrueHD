@@ -9,7 +9,8 @@
 ```sh
 xcodebuild -project Swift_TrueHD.xcodeproj -scheme decoder_cli \
   -configuration Release -destination 'generic/platform=macOS' \
-  -derivedDataPath Build/DecoderDerived build
+  -derivedDataPath Build/DecoderDerived \
+  CONFIGURATION_BUILD_DIR="$PWD/Build/Products/Release" build
 ```
 
 打开同一个 `.xcodeproj` 即可选择 `decoder_cli` 或 `decoder_framework` Scheme。两个 Target 均独立于 `libtruehda` 和 `turehda`，CLI 仅依赖 decoder Framework 和系统音频库。验证工具链为 Xcode 26.3，decoder 的 macOS deployment target 为 11.0；Release 产物为 arm64/x86_64 通用二进制。

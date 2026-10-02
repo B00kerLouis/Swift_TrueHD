@@ -192,6 +192,9 @@ STHDStatus sthd_audio_write(STHDAudioOutput *o, const STHDFrame *f, float gain,
                             uint32_t timeout) try {
     if (!o || !f || !std::isfinite(gain) || gain < 0 || o->ring.draining.load())
         return STHD_INVALID_ARGUMENT;
+    auto failure = o->ring.failure.load();
+    if (failure != STHD_OK)
+        return failure;
     std::array<float, 640> pcm{};
     if (o->driver->plan.mode == STHD_AUDIO_POSITIONAL_OBJECTS) {
         STHDDecodedPresentation v{};

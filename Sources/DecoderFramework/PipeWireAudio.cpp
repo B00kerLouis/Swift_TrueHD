@@ -375,9 +375,10 @@ struct PipeWireDriver final : Driver {
             e.drained = drained_event;
             return e;
         }();
-        auto *props = pw_properties_new(
-            PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback", PW_KEY_MEDIA_ROLE,
-            "Music", PW_KEY_TARGET_OBJECT, plan.endpoint, "stream.dont-remix", "true", nullptr);
+        auto *props =
+            pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
+                              PW_KEY_MEDIA_ROLE, "Music", PW_KEY_TARGET_OBJECT, plan.endpoint,
+                              "stream.dont-remix", "true", "node.dont-reconnect", "true", nullptr);
         stream =
             pw_stream_new_simple(pw_thread_loop_get_loop(loop), "TrueHD PCM", props, &events, this);
         if (!stream)

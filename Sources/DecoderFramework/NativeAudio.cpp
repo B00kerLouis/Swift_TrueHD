@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "AudioBackend.hpp"
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 #if defined(__APPLE__) && !defined(STHD_DISABLE_NATIVE_DEVICE)
@@ -55,8 +56,32 @@ void native_capabilities(STHDAudioCapabilities &c) {
 struct CoreAudioDriver final : Driver {
     AudioUnit unit = nullptr;
     std::vector<float> scratch;
+    bool observing_default = false, observing_layout = false, observing_preferred = false;
+    AudioObjectPropertyAddress default_address{kAudioHardwarePropertyDefaultOutputDevice,
+                                               kAudioObjectPropertyScopeGlobal,
+                                               kAudioObjectPropertyElementMain};
+    AudioObjectPropertyAddress layout_address{kAudioDevicePropertyStreamConfiguration,
+                                              kAudioObjectPropertyScopeOutput,
+                                              kAudioObjectPropertyElementMain};
+    AudioObjectPropertyAddress preferred_address{kAudioDevicePropertyPreferredChannelLayout,
+                                                 kAudioObjectPropertyScopeOutput,
+                                                 kAudioObjectPropertyElementMain};
+    static OSStatus changed(AudioObjectID, UInt32, const AudioObjectPropertyAddress *,
+                            void *context) {
+        static_cast<CoreAudioDriver *>(context)->ring.failure.store(STHD_DEVICE_UNAVAILABLE);
+        return noErr;
+    }
     CoreAudioDriver(Ring &r, const STHDAudioPlan &p) : Driver(r, p), scratch(4096 * r.channels) {}
     ~CoreAudioDriver() {
+        if (observing_preferred)
+            AudioObjectRemovePropertyListener(plan.native_device_id, &preferred_address, changed,
+                                              this);
+        if (observing_default)
+            AudioObjectRemovePropertyListener(kAudioObjectSystemObject, &default_address, changed,
+                                              this);
+        if (observing_layout)
+            AudioObjectRemovePropertyListener(plan.native_device_id, &layout_address, changed,
+                                              this);
         if (unit) {
             AudioOutputUnitStop(unit);
             AudioUnitUninitialize(unit);
@@ -69,6 +94,12 @@ struct CoreAudioDriver final : Driver {
         if (frames > 4096 || !buffers) {
             d.ring.failure.store(STHD_AUDIO_FAILURE);
             return kAudio_ParamError;
+        }
+        if (d.ring.failure.load() != STHD_OK) {
+            for (unsigned b = 0; b < buffers->mNumberBuffers; ++b)
+                if (buffers->mBuffers[b].mData)
+                    std::memset(buffers->mBuffers[b].mData, 0, buffers->mBuffers[b].mDataByteSize);
+            return noErr;
         }
         d.ring.consume(d.scratch.data(), frames);
         unsigned channel = 0;
@@ -134,22 +165,77 @@ struct CoreAudioDriver final : Driver {
                           int(result));
             return STHD_AUDIO_FAILURE;
         }
+        observing_default = AudioObjectAddPropertyListener(
+                                kAudioObjectSystemObject, &default_address, changed, this) == noErr;
+        observing_layout = AudioObjectAddPropertyListener(plan.native_device_id, &layout_address,
+                                                          changed, this) == noErr;
+        if (AudioObjectHasProperty(plan.native_device_id, &preferred_address)) {
+            observing_preferred =
+                AudioObjectAddPropertyListener(plan.native_device_id, &preferred_address, changed,
+                                               this) == noErr;
+            if (!observing_preferred)
+                return STHD_AUDIO_FAILURE;
+        }
+        if (!observing_default || !observing_layout) {
+            std::snprintf(error, sizeof(error),
+                          "cannot monitor default device/channel layout changes");
+            return STHD_AUDIO_FAILURE;
+        }
         return STHD_OK;
     }
     STHDStatus start() override {
         return AudioOutputUnitStart(unit) == noErr ? STHD_OK : STHD_AUDIO_FAILURE;
     }
     STHDStatus finish(uint32_t timeout) override {
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
         if (!wait_empty(ring, timeout))
             return ring.failure.load() != STHD_OK ? ring.failure.load() : STHD_TIMEOUT;
-        // Ring empty means the last quantum entered the AudioUnit. Allow its
-        // reported conversion/device latency to pass before stopping output.
-        Float64 latency = 0;
+        Float64 latency = 0, rate = 48000;
         UInt32 n = sizeof(latency);
         AudioUnitGetProperty(unit, kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0, &latency,
                              &n);
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(uint32_t(std::min(1000.0, latency * 1000 + 100))));
+        AudioObjectPropertyAddress rate_address{kAudioDevicePropertyNominalSampleRate,
+                                                kAudioObjectPropertyScopeGlobal,
+                                                kAudioObjectPropertyElementMain};
+        n = sizeof(rate);
+        AudioObjectGetPropertyData(plan.native_device_id, &rate_address, 0, nullptr, &n, &rate);
+        auto samples = [](AudioObjectID id, AudioObjectPropertySelector selector,
+                          AudioObjectPropertyScope scope) {
+            AudioObjectPropertyAddress address{selector, scope, kAudioObjectPropertyElementMain};
+            UInt32 value = 0, size = sizeof(value);
+            return AudioObjectGetPropertyData(id, &address, 0, nullptr, &size, &value) == noErr
+                       ? value
+                       : 0U;
+        };
+        uint64_t hardware =
+            samples(plan.native_device_id, kAudioDevicePropertyLatency,
+                    kAudioObjectPropertyScopeOutput) +
+            uint64_t(samples(plan.native_device_id, kAudioDevicePropertySafetyOffset,
+                             kAudioObjectPropertyScopeOutput));
+        hardware += samples(plan.native_device_id, kAudioDevicePropertyBufferFrameSize,
+                            kAudioObjectPropertyScopeGlobal);
+        std::array<AudioStreamID, 128> streams{};
+        AudioObjectPropertyAddress stream_address{kAudioDevicePropertyStreams,
+                                                  kAudioObjectPropertyScopeOutput,
+                                                  kAudioObjectPropertyElementMain};
+        n = sizeof(streams);
+        UInt32 stream_latency = 0;
+        if (AudioObjectGetPropertyData(plan.native_device_id, &stream_address, 0, nullptr, &n,
+                                       streams.data()) == noErr)
+            for (unsigned i = 0; i < n / sizeof(AudioStreamID); ++i)
+                stream_latency =
+                    std::max(stream_latency, samples(streams[i], kAudioStreamPropertyLatency,
+                                                     kAudioObjectPropertyScopeGlobal));
+        hardware += stream_latency;
+        // Account for device/stream latency as well as the AudioUnit converter;
+        // FIFO consumption alone is not proof that the final DAC frame played.
+        double tail = latency + double(hardware) / (rate > 0 ? rate : 48000) + 0.02;
+        if (!std::isfinite(tail) || tail < 0 || tail > 3600)
+            return STHD_AUDIO_FAILURE;
+        auto duration = std::chrono::milliseconds(uint64_t(tail * 1000 + 1));
+        if (std::chrono::steady_clock::now() + duration > deadline)
+            return STHD_TIMEOUT;
+        std::this_thread::sleep_for(duration);
         return ring.failure.load();
     }
 };
