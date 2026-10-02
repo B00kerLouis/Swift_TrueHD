@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: native-build-${{ github.ref }}
+  group: native-build-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
   macos:
@@ -21,9 +21,9 @@ jobs:
       - name: Build encoder and independent decoder targets
         run: |
           xcodebuild -version
-          xcodebuild -project Swift_TrueHD.xcodeproj -scheme all -configuration Release -destination 'generic/platform=macOS' -derivedDataPath Build/EncoderDerived CODE_SIGNING_ALLOWED=NO build
-          xcodebuild -project Swift_TrueHD.xcodeproj -scheme decoder_cli -configuration Release -destination 'generic/platform=macOS' -derivedDataPath Build/DecoderDerived CODE_SIGNING_ALLOWED=NO build
-          xcodebuild -project Swift_TrueHD.xcodeproj -scheme decoder_framework -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath Build/DecoderDerived CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -project Swift_TrueHD.xcodeproj -scheme all -configuration Release -destination 'generic/platform=macOS' -derivedDataPath Build/EncoderDerived CONFIGURATION_BUILD_DIR="$PWD/Build/Products/Release" CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -project Swift_TrueHD.xcodeproj -scheme decoder_cli -configuration Release -destination 'generic/platform=macOS' -derivedDataPath Build/DecoderDerived CONFIGURATION_BUILD_DIR="$PWD/Build/Products/Release" CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -project Swift_TrueHD.xcodeproj -scheme decoder_framework -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath Build/DecoderDerived CONFIGURATION_BUILD_DIR="$PWD/Build/Products/Debug" CODE_SIGNING_ALLOWED=NO build
           lipo -info Build/Products/Release/turehda
           lipo -info Build/Products/Release/truehdd
           otool -L Build/Products/Release/truehdd

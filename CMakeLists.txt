@@ -14,8 +14,7 @@ add_library(decoder_framework STATIC
     Sources/DecoderFramework/Renderer.cpp
     Sources/DecoderFramework/PlatformAudio.cpp
     Sources/DecoderFramework/AudioOutput.cpp
-    Sources/DecoderFramework/NativeAudio.cpp
-    Sources/DecoderFramework/PipeWireAudio.cpp)
+    Sources/DecoderFramework/NativeAudio.cpp)
 target_include_directories(decoder_framework PUBLIC Sources/DecoderFramework/include)
 target_compile_features(decoder_framework PUBLIC cxx_std_17)
 find_package(Threads REQUIRED)
@@ -32,6 +31,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     if(PkgConfig_FOUND)
         pkg_check_modules(PIPEWIRE QUIET IMPORTED_TARGET libpipewire-0.3)
         if(PIPEWIRE_FOUND)
+            target_sources(decoder_framework PRIVATE Sources/DecoderFramework/PipeWireAudio.cpp)
             target_compile_definitions(decoder_framework PRIVATE STHD_HAVE_PIPEWIRE=1)
             target_link_libraries(decoder_framework PUBLIC PkgConfig::PIPEWIRE)
         endif()
