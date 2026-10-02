@@ -22,7 +22,7 @@ Build/Products/Release/truehdd -i INPUT.mlp -o ELEMENTS.wav --presentation eleme
 Build/Products/Release/truehdd --device-info
 ```
 
-完整布局：`2.0`、`5.1`、`7.1`、`5.1.2`、`5.1.4`、`7.1.2`、`7.1.4`、`7.1.6`、`9.1.6`。5.1 系列也接受 `5.1(back)`、`5.1.2(back)`、`5.1.4(back)`，用于实际以 BL/BR 标记环绕对的设备。默认 `--layout auto` 读取默认设备的实际扬声器标签；不根据通道数量猜测高度或扬声器位置。若驱动只有 Unknown/Discrete 标签，应显式指定布局。`--speaker-order FL,FR,...` 可以指定与所选布局相同的一组扬声器的实际物理顺序。可选 `--gain-db -6` 为渲染求和保留余量，CLI 报告量化到 24-bit 时的削波采样数。
+完整布局：`2.0`、`5.1`、`7.1`、`5.1.2`、`5.1.4`、`7.1.2`、`7.1.4`、`7.1.6`、`9.1.6`。5.1 系列也接受 `5.1(back)`、`5.1.2(back)`、`5.1.4(back)`，用于实际以 BL/BR 标记环绕对的设备。默认 `--layout auto` 读取默认设备的实际扬声器标签；不根据通道数量猜测高度或扬声器位置。若驱动只有 Unknown/Discrete 标签，应显式指定布局；两通道 CoreAudio 设备若明确提供 preferred stereo channel pair，可自动映射 L/R，含反转的物理顺序。`--speaker-order FL,FR,...` 可以指定与所选布局相同的一组扬声器的实际物理顺序。可选 `--gain-db -6` 为渲染求和保留余量，CLI 报告量化到 24-bit 时的削波采样数。
 
 `--presentation 2|6|8|elements` 提取相应呈现的原始 24-bit PCM，与布局渲染、声道重排和增益选项互斥。DRC gain code 由 Framework 返回，默认保留无 DRC 的无损 PCM。
 

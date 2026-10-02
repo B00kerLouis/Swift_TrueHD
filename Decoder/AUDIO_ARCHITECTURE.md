@@ -51,3 +51,14 @@ truehdd --device-info
 ```
 
 音频引擎的系统音量、DSP、量化或 Spatial/HRTF 渲染不属于 decoder 的逐字节 PCM 保证。当前 renderer 未声称与 Dolby 官方 renderer 逐采样等价，decoder 仍只支持本项目固定-basis 48 kHz profile。
+
+
+## Auto mapping corrections
+
+Auto reads the endpoint's active physical slot count and OS-declared positions. It never substitutes the developer machine's layout. All three platform readers use the same order-preserving geometry validation. Unsupported/unnamed positions remain unresolved.
+
+CoreAudio reads actual stream configuration before optional preferred layout metadata; expands native tags/bitmaps and explicit labels. WAVE/bitmap Sur+SurDirect and MPEG Sur+RearSur families retain their different native rear/side slot orders. Only a genuinely two-slot endpoint may use an explicit OS preferred stereo-channel pair to complete its map; a stereo monitoring preference cannot label a multichannel interface. Slot-reversed pairs remain reversed.
+
+Windows reads GetMixFormat.dwChannelMask, then PKEY_AudioEndpoint_PhysicalSpeakers if the mask is unavailable. Both masks must describe the actual active channel count. It does not invent FL/FR from an unlabelled count of two. Spatial static positions/object budget remain separate from physical PCM slots. See [Microsoft endpoint speaker properties](https://learn.microsoft.com/en-us/windows/win32/coreaudio/pkey-audioendpoint-physicalspeakers).
+
+PipeWire reads current format, active sink profile/position properties, and default sink metadata; AUX/UNPOSITIONED channels do not become speaker positions. Integration tests include nine layout families, 5.1 back-label, reversed 7.1/7.1.4/9.1.6 physical order and 16 unpositioned AUX slots. These virtual fixtures validate metadata handling; they are not treated as a user's hardware configuration.

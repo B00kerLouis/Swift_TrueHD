@@ -17,7 +17,7 @@ Each decoder owns a fixed bounded stream state and is externally serialized. Sep
 
 Stream directly from external paths, one AU (maximum 8190 bytes, 40 samples) at a time. Never stage complete MXF/MLP inputs onto local storage or load whole programmes into memory. CLI writes 24-bit RIFF/RF64 and a channel-order sidecar, refuses overwrite, and cleans newly created incomplete outputs on normal failure or SIGINT/SIGTERM. Abrupt kill/power loss can leave a partial output; no resumable PCM writer is implemented.
 
-Native discovery must use actual labelled topology; channel count alone cannot distinguish 5.1.2 from 7.1 or 5.1.4 from 7.1.2. Unknown/discrete labels require explicit layout. Rendering must honor physical channel order, isolate LFE, retain height PCM, and report PCM clipping rather than silently claim losslessness after rendering.
+Native discovery must use actual labelled topology; channel count alone cannot distinguish 5.1.2 from 7.1 or 5.1.4 from 7.1.2. Unknown/discrete labels require explicit layout, except a two-channel CoreAudio endpoint whose explicit preferred stereo-channel pair identifies L/R. Preserve the device physical order; do not infer multichannel positions from counts. Rendering must honor physical channel order, isolate LFE, retain height PCM, and report PCM clipping rather than silently claim losslessness after rendering.
 
 ## Build and validation
 

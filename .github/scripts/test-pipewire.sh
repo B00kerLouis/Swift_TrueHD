@@ -52,4 +52,19 @@ done <<'LAYOUTS'
 7.1.6|14|FL FR FC LFE RL RR SL SR TFL TFR TRL TRR TSL TSR
 9.1.6|16|FL FR FC LFE RL RR SL SR TFL TFR TRL TRR TSL TSR FLW FRW
 5.1-back|6|FL FR FC LFE RL RR
+7.1-reversed|8|SR SL RR RL LFE FC FR FL
+7.1.4-reversed|12|TRR TRL TFR TFL SR SL RR RL LFE FC FR FL
+9.1.6-reversed|16|FRW FLW TSR TSL TRR TRL TFR TFL SR SL RR RL LFE FC FR FL
 LAYOUTS
+
+# Unpositioned hardware slots are not a speaker map, even at a familiar count.
+pw-cli destroy "$previous_id"
+pw-cli create-node adapter '{ factory.name = support.null-audio-sink node.name = sthd-ci media.class = Audio/Sink object.linger = true audio.rate = 48000 audio.channels = 16 audio.position = [ AUX0 AUX1 AUX2 AUX3 AUX4 AUX5 AUX6 AUX7 AUX8 AUX9 AUX10 AUX11 AUX12 AUX13 AUX14 AUX15 ] }'
+sleep 0.5
+set +e
+"$smoke_binary" > "$XDG_RUNTIME_DIR/discrete.log" 2>&1
+unknown_result=$?
+set -e
+cat "$XDG_RUNTIME_DIR/discrete.log"
+[[ "$unknown_result" -eq 2 ]]
+grep -q 'unknown speaker layout' "$XDG_RUNTIME_DIR/discrete.log"

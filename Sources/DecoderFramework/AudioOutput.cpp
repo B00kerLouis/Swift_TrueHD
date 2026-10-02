@@ -13,17 +13,7 @@ unsigned mask(const STHDLayout &l) {
     }
     return m;
 }
-bool valid_layout(const STHDLayout &l) {
-    const char *names[] = {"2.0",   "5.1",   "7.1",   "5.1.2",     "5.1.4",       "7.1.2",
-                           "7.1.4", "7.1.6", "9.1.6", "5.1(back)", "5.1.2(back)", "5.1.4(back)"};
-    for (auto name : names) {
-        STHDLayout v{};
-        sthd_layout_named(name, &v);
-        if (v.channels == l.channels && mask(v) == mask(l))
-            return true;
-    }
-    return false;
-}
+bool valid_layout(const STHDLayout &layout) { return sthd_audio::reported_layout_valid(layout); }
 } // namespace
 struct STHDAudioOutput {
     sthd_audio::Ring ring;

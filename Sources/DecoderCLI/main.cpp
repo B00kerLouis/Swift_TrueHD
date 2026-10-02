@@ -276,6 +276,7 @@ int run(const std::vector<std::string> &args) {
     if (device) {
         STHDAudioCapabilities caps{};
         auto status = sthd_audio_capabilities(&caps);
+        std::cout << "Endpoint=" << caps.endpoint << "\n";
         std::cout << "PCM backend=" << sthd_audio_backend_name(caps.pcm_backend)
                   << ", channels=" << caps.pcm_channels << ", rate=" << caps.pcm_sample_rate
                   << ", labels=" << (caps.pcm_layout_valid ? "known" : "unknown") << "\n";
@@ -382,6 +383,7 @@ int run(const std::vector<std::string> &args) {
     STHDFrame frame{};
     uint64_t au = 0, samples = 0, clipped = 0;
     double peak = 0;
+    bool output_announced = false;
     std::array<uint8_t, STHD_MAX_ACCESS_UNIT> bytes{};
     while (true) {
         if (interrupted)
@@ -407,6 +409,15 @@ int run(const std::vector<std::string> &args) {
             if (consumed != size)
                 fail("player did not accept the complete AU");
             check(sthd_player_last_frame(player.get(), &frame));
+            if (!output_announced) {
+                STHDPlayerStats stats{};
+                check(sthd_player_stats(player.get(), &stats));
+                std::cout << "Playing: backend=" << sthd_audio_backend_name(stats.backend)
+                          << ", output channels=" << stats.output_channels
+                          << ", mode=" << stats.mode << "\n"
+                          << std::flush;
+                output_announced = true;
+            }
         } else {
             auto status = sthd_decode_access_unit(decoder.get(), bytes.data(), size, &frame);
             if (status != STHD_OK)

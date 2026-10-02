@@ -56,7 +56,8 @@ void native_capabilities(STHDAudioCapabilities &c) {
 struct CoreAudioDriver final : Driver {
     AudioUnit unit = nullptr;
     std::vector<float> scratch;
-    bool observing_default = false, observing_layout = false, observing_preferred = false;
+    bool observing_default = false, observing_layout = false, observing_preferred = false,
+         observing_stereo = false;
     AudioObjectPropertyAddress default_address{kAudioHardwarePropertyDefaultOutputDevice,
                                                kAudioObjectPropertyScopeGlobal,
                                                kAudioObjectPropertyElementMain};
@@ -66,6 +67,9 @@ struct CoreAudioDriver final : Driver {
     AudioObjectPropertyAddress preferred_address{kAudioDevicePropertyPreferredChannelLayout,
                                                  kAudioObjectPropertyScopeOutput,
                                                  kAudioObjectPropertyElementMain};
+    AudioObjectPropertyAddress stereo_address{kAudioDevicePropertyPreferredChannelsForStereo,
+                                              kAudioObjectPropertyScopeOutput,
+                                              kAudioObjectPropertyElementMain};
     static OSStatus changed(AudioObjectID, UInt32, const AudioObjectPropertyAddress *,
                             void *context) {
         static_cast<CoreAudioDriver *>(context)->ring.failure.store(STHD_DEVICE_UNAVAILABLE);
@@ -73,6 +77,9 @@ struct CoreAudioDriver final : Driver {
     }
     CoreAudioDriver(Ring &r, const STHDAudioPlan &p) : Driver(r, p), scratch(4096 * r.channels) {}
     ~CoreAudioDriver() {
+        if (observing_stereo)
+            AudioObjectRemovePropertyListener(plan.native_device_id, &stereo_address, changed,
+                                              this);
         if (observing_preferred)
             AudioObjectRemovePropertyListener(plan.native_device_id, &preferred_address, changed,
                                               this);
@@ -131,6 +138,12 @@ struct CoreAudioDriver final : Driver {
             std::snprintf(error, sizeof(error), "default output device changed");
             return STHD_DEVICE_UNAVAILABLE;
         }
+        if (current.pcm_layout_valid)
+            for (unsigned i = 0; i < ring.channels; ++i)
+                if (current.pcm_layout.speakers[i] != plan.layout.speakers[i]) {
+                    std::snprintf(error, sizeof(error), "device physical channel order changed");
+                    return STHD_UNSUPPORTED_OUTPUT;
+                }
         AudioComponentDescription description{kAudioUnitType_Output,
                                               kAudioUnitSubType_DefaultOutput,
                                               kAudioUnitManufacturer_Apple, 0, 0};
@@ -174,6 +187,12 @@ struct CoreAudioDriver final : Driver {
                 AudioObjectAddPropertyListener(plan.native_device_id, &preferred_address, changed,
                                                this) == noErr;
             if (!observing_preferred)
+                return STHD_AUDIO_FAILURE;
+        }
+        if (AudioObjectHasProperty(plan.native_device_id, &stereo_address)) {
+            observing_stereo = AudioObjectAddPropertyListener(
+                                   plan.native_device_id, &stereo_address, changed, this) == noErr;
+            if (!observing_stereo)
                 return STHD_AUDIO_FAILURE;
         }
         if (!observing_default || !observing_layout) {

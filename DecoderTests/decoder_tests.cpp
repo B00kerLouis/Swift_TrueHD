@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include "../Sources/DecoderFramework/AudioBackend.hpp"
+#if defined(STHD_TEST_COREAUDIO_MAPS)
+#include <AudioToolbox/AudioToolbox.h>
+#endif
 #include "TrueHDDecoder.h"
 #include <algorithm>
 #include <array>
@@ -250,6 +254,85 @@ void player_transport_tests() {
            "player options ABI size check");
 }
 void audio_policy_tests() {
+#if defined(STHD_TEST_COREAUDIO_MAPS)
+    for (auto kind :
+         {kAudioFormatProperty_ChannelLayoutForBitmap, kAudioFormatProperty_ChannelLayoutForTag}) {
+        UInt32 value = kind == kAudioFormatProperty_ChannelLayoutForBitmap
+                           ? 0x63f
+                           : kAudioChannelLayoutTag_MPEG_7_1_C,
+               size = 0;
+        expect(AudioFormatGetPropertyInfo(kind, sizeof(value), &value, &size) == noErr,
+               "native channel layout expansion");
+        std::vector<uint8_t> bytes(size);
+        expect(AudioFormatGetProperty(kind, sizeof(value), &value, &size, bytes.data()) == noErr,
+               "native map descriptors");
+        auto *ca = reinterpret_cast<AudioChannelLayout *>(bytes.data());
+        std::array<uint32_t, 16> labels{};
+        for (unsigned i = 0; i < ca->mNumberChannelDescriptions; ++i)
+            labels[i] = ca->mChannelDescriptions[i].mChannelLabel;
+        STHDLayout converted{};
+        expect(sthd_audio::coreaudio_reported_labels(
+                   labels.data(), ca->mNumberChannelDescriptions,
+                   kind == kAudioFormatProperty_ChannelLayoutForBitmap, converted),
+               "bitmap/MPEG actual native labels map to 7.1");
+        expect(converted.speakers[4] ==
+                       (kind == kAudioFormatProperty_ChannelLayoutForBitmap ? STHD_BL : STHD_SL) &&
+                   converted.speakers[6] ==
+                       (kind == kAudioFormatProperty_ChannelLayoutForBitmap ? STHD_SL : STHD_BL),
+               "CoreAudio physical surround order");
+    }
+#endif
+    const char *device_layouts[] = {"2.0",   "5.1",       "7.1",         "5.1.2",
+                                    "5.1.4", "7.1.2",     "7.1.4",       "7.1.6",
+                                    "9.1.6", "5.1(back)", "5.1.2(back)", "5.1.4(back)"};
+    auto mapping_frame = fixture();
+    mapping_frame.presentations = 3;
+    for (auto name : device_layouts) {
+        STHDLayout actual{};
+        sthd_layout_named(name, &actual);
+        std::reverse(actual.speakers, actual.speakers + actual.channels);
+        expect(sthd_audio::reported_layout_valid(actual),
+               "reported multichannel physical order accepted");
+        STHDAudioCapabilities device{};
+        device.pcm_available = device.pcm_layout_valid = 1;
+        device.pcm_channels = actual.channels;
+        device.pcm_layout = actual;
+        for (auto backend : {STHD_AUDIO_COREAUDIO, STHD_AUDIO_WASAPI, STHD_AUDIO_PIPEWIRE}) {
+            device.pcm_backend = backend;
+            STHDAudioPlan selected{};
+            expect(sthd_audio_plan(&mapping_frame, &device, nullptr, 0, &selected) == STHD_OK &&
+                       selected.layout.channels == actual.channels,
+                   "auto plan uses actual channel map");
+            for (unsigned i = 0; i < actual.channels; ++i)
+                expect(selected.layout.speakers[i] == actual.speakers[i],
+                       "auto retains physical slot order");
+        }
+        actual.speakers[1] = actual.speakers[0];
+        expect(!sthd_audio::reported_layout_valid(actual), "duplicate device positions rejected");
+    }
+    STHDLayout windows_map{};
+    expect(sthd_audio::wave_mask_layout(8, 0x63f, windows_map) &&
+               windows_map.speakers[4] == STHD_BL && windows_map.speakers[6] == STHD_SL,
+           "Windows real 7.1 mask ordering");
+    expect(sthd_audio::wave_mask_layout(6, 0x60f, windows_map) &&
+               windows_map.speakers[4] == STHD_SL,
+           "Windows 5.1 side mask");
+    expect(sthd_audio::wave_mask_layout(6, 0x3f, windows_map) && windows_map.speakers[4] == STHD_BL,
+           "Windows 5.1 back mask");
+    expect(!sthd_audio::wave_mask_layout(2, 0, windows_map) &&
+               !sthd_audio::wave_mask_layout(2, 0x63f, windows_map),
+           "absent/mismatched mask never becomes stereo");
+    STHDLayout device_stereo{};
+    expect(sthd_audio::preferred_stereo_layout(2, 1, 2, device_stereo) &&
+               device_stereo.speakers[0] == STHD_FL && device_stereo.speakers[1] == STHD_FR,
+           "authoritative stereo pair");
+    expect(sthd_audio::preferred_stereo_layout(2, 2, 1, device_stereo) &&
+               device_stereo.speakers[0] == STHD_FR && device_stereo.speakers[1] == STHD_FL,
+           "reversed physical stereo pair");
+    expect(!sthd_audio::preferred_stereo_layout(2, 1, 1, device_stereo) &&
+               !sthd_audio::preferred_stereo_layout(16, 1, 2, device_stereo) &&
+               !sthd_audio::preferred_stereo_layout(2, 0, 2, device_stereo),
+           "invalid/discrete multichannel stereo inference rejected");
     auto f = fixture();
     STHDDecodedPresentation v{};
     expect(sthd_presentation(&f, STHD_PRESENTATION_IMMERSIVE, &v) == STHD_OK,

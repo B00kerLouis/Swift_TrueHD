@@ -34,18 +34,7 @@ static bool layout(const spa_audio_info_raw &format, STHDLayout &l) {
         if (!found)
             return false;
     }
-    const char *names[] = {"2.0",   "5.1",   "7.1",   "5.1.2",     "5.1.4",       "7.1.2",
-                           "7.1.4", "7.1.6", "9.1.6", "5.1(back)", "5.1.2(back)", "5.1.4(back)"};
-    for (auto name : names) {
-        STHDLayout v{};
-        sthd_layout_named(name, &v);
-        unsigned m = 0;
-        for (unsigned i = 0; i < v.channels; ++i)
-            m |= 1U << unsigned(v.speakers[i]);
-        if (m == seen)
-            return true;
-    }
-    return false;
+    return reported_layout_valid(l);
 }
 static void initialize() {
     static const bool initialized = []() {

@@ -22,26 +22,8 @@
 #include <alsa/asoundlib.h>
 #endif
 namespace {
-[[maybe_unused]] STHDStatus checked(STHDLayout &l) {
-    const char *names[] = {"2.0",   "5.1",   "7.1",   "5.1.2",     "5.1.4",       "7.1.2",
-                           "7.1.4", "7.1.6", "9.1.6", "5.1(back)", "5.1.2(back)", "5.1.4(back)"};
-    unsigned seen = 0;
-    for (unsigned i = 0; i < l.channels; ++i) {
-        unsigned x = unsigned(l.speakers[i]);
-        if (x >= 16 || (seen & (1U << x)))
-            return STHD_UNKNOWN_LAYOUT;
-        seen |= 1U << x;
-    }
-    for (auto name : names) {
-        STHDLayout standard{};
-        sthd_layout_named(name, &standard);
-        unsigned mask = 0;
-        for (unsigned i = 0; i < standard.channels; ++i)
-            mask |= 1U << unsigned(standard.speakers[i]);
-        if (mask == seen)
-            return STHD_OK;
-    }
-    return STHD_UNKNOWN_LAYOUT;
+[[maybe_unused]] STHDStatus checked(const STHDLayout &layout) {
+    return sthd_audio::reported_layout_valid(layout) ? STHD_OK : STHD_UNKNOWN_LAYOUT;
 }
 #if defined(__APPLE__) && !defined(STHD_DISABLE_NATIVE_DEVICE)
 bool apple_label(AudioChannelLabel label, STHDSpeaker &s) {
@@ -111,6 +93,36 @@ bool apple_label(AudioChannelLabel label, STHDSpeaker &s) {
 }
 #endif
 } // namespace
+#if defined(__APPLE__) && !defined(STHD_DISABLE_NATIVE_DEVICE)
+namespace sthd_audio {
+bool coreaudio_reported_labels(const uint32_t *labels, uint32_t channels, bool bitmap,
+                               STHDLayout &out) {
+    if (!labels || channels < 2 || channels > 16)
+        return false;
+    bool left_direct = false, right_direct = false;
+    for (unsigned i = 0; i < channels; ++i) {
+        left_direct |= labels[i] == kAudioChannelLabel_LeftSurroundDirect;
+        right_direct |= labels[i] == kAudioChannelLabel_RightSurroundDirect;
+    }
+    STHDLayout map{};
+    map.channels = channels;
+    for (unsigned i = 0; i < channels; ++i) {
+        if (!apple_label(labels[i], map.speakers[i]))
+            return false;
+        if (bitmap || (left_direct && right_direct)) {
+            if (labels[i] == kAudioChannelLabel_LeftSurround)
+                map.speakers[i] = STHD_BL;
+            if (labels[i] == kAudioChannelLabel_RightSurround)
+                map.speakers[i] = STHD_BR;
+        }
+    }
+    if (!reported_layout_valid(map))
+        return false;
+    out = map;
+    return true;
+}
+} // namespace sthd_audio
+#endif
 extern "C" STHDStatus sthd_default_device_layout(STHDLayout *l, char *description,
                                                  size_t capacity) try {
     if (!l || !description || capacity == 0)
@@ -127,49 +139,15 @@ extern "C" STHDStatus sthd_default_device_layout(STHDLayout *l, char *descriptio
                                    &device) != noErr ||
         device == 0)
         return STHD_DEVICE_UNAVAILABLE;
-    address = {kAudioDevicePropertyPreferredChannelLayout, kAudioObjectPropertyScopeOutput,
-               kAudioObjectPropertyElementMain};
-    if (AudioObjectGetPropertyDataSize(device, &address, 0, nullptr, &size) != noErr)
-        return STHD_UNKNOWN_LAYOUT;
-    if (size < offsetof(AudioChannelLayout, mChannelDescriptions))
-        return STHD_UNKNOWN_LAYOUT;
-    std::vector<uint8_t> buffer(size);
-    if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, buffer.data()) != noErr)
-        return STHD_DEVICE_UNAVAILABLE;
-    auto *layout = reinterpret_cast<AudioChannelLayout *>(buffer.data());
-    if (layout->mChannelLayoutTag != kAudioChannelLayoutTag_UseChannelDescriptions) {
-        const bool bitmap = layout->mChannelLayoutTag == kAudioChannelLayoutTag_UseChannelBitmap;
-        const AudioFormatPropertyID property = bitmap ? kAudioFormatProperty_ChannelLayoutForBitmap
-                                                      : kAudioFormatProperty_ChannelLayoutForTag;
-        UInt32 value = bitmap ? layout->mChannelBitmap : layout->mChannelLayoutTag;
-        UInt32 expanded_size = 0;
-        if (AudioFormatGetPropertyInfo(property, sizeof(value), &value, &expanded_size) != noErr)
-            return STHD_UNKNOWN_LAYOUT;
-        std::vector<uint8_t> expanded(expanded_size);
-        if (AudioFormatGetProperty(property, sizeof(value), &value, &expanded_size,
-                                   expanded.data()) != noErr)
-            return STHD_UNKNOWN_LAYOUT;
-        buffer = std::move(expanded);
-        layout = reinterpret_cast<AudioChannelLayout *>(buffer.data());
-    }
-    unsigned channels = layout->mNumberChannelDescriptions;
-    std::snprintf(description, capacity, "CoreAudio default output, %u labelled channels",
-                  channels);
-    if (channels < 2 || channels > 16 ||
-        buffer.size() < offsetof(AudioChannelLayout, mChannelDescriptions) +
-                            channels * sizeof(AudioChannelDescription))
-        return STHD_UNKNOWN_LAYOUT;
-    for (unsigned i = 0; i < channels; ++i)
-        if (!apple_label(layout->mChannelDescriptions[i].mChannelLabel, l->speakers[i]))
-            return STHD_UNKNOWN_LAYOUT;
-    // Preferred layout must agree with the actual output stream configuration.
+    // Read active output slots first. Preferred channel layouts are optional
+    // properties, and must never replace the actual stream channel count.
     address = {kAudioDevicePropertyStreamConfiguration, kAudioObjectPropertyScopeOutput,
                kAudioObjectPropertyElementMain};
-    if (AudioObjectGetPropertyDataSize(device, &address, 0, nullptr, &size) != noErr)
+    if (AudioObjectGetPropertyDataSize(device, &address, 0, nullptr, &size) != noErr ||
+        size < offsetof(AudioBufferList, mBuffers) || size > 1024 * 1024)
         return STHD_DEVICE_UNAVAILABLE;
     std::vector<uint8_t> streams(size);
-    if (size < offsetof(AudioBufferList, mBuffers) ||
-        AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, streams.data()) != noErr)
+    if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, streams.data()) != noErr)
         return STHD_DEVICE_UNAVAILABLE;
     auto *list = reinterpret_cast<AudioBufferList *>(streams.data());
     if (streams.size() <
@@ -178,21 +156,92 @@ extern "C" STHDStatus sthd_default_device_layout(STHDLayout *l, char *descriptio
     unsigned actual = 0;
     for (unsigned i = 0; i < list->mNumberBuffers; ++i)
         actual += list->mBuffers[i].mNumberChannels;
-    if (actual != channels)
-        return STHD_UNKNOWN_LAYOUT;
-    l->channels = channels;
-    return checked(*l);
+    if (actual < 2 || actual > 16)
+        return STHD_UNSUPPORTED_OUTPUT;
+    // Tag, bitmap and explicit channel descriptions all come from the device.
+    address = {kAudioDevicePropertyPreferredChannelLayout, kAudioObjectPropertyScopeOutput,
+               kAudioObjectPropertyElementMain};
+    bool complete = false;
+    if (AudioObjectGetPropertyDataSize(device, &address, 0, nullptr, &size) == noErr &&
+        size >= offsetof(AudioChannelLayout, mChannelDescriptions) && size <= 1024 * 1024) {
+        std::vector<uint8_t> buffer(size);
+        if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, buffer.data()) ==
+            noErr) {
+            auto *layout = reinterpret_cast<AudioChannelLayout *>(buffer.data());
+            bool expanded = true;
+            const bool bitmap_layout =
+                layout->mChannelLayoutTag == kAudioChannelLayoutTag_UseChannelBitmap;
+            if (layout->mChannelLayoutTag != kAudioChannelLayoutTag_UseChannelDescriptions) {
+                bool bitmap = layout->mChannelLayoutTag == kAudioChannelLayoutTag_UseChannelBitmap;
+                AudioFormatPropertyID property = bitmap
+                                                     ? kAudioFormatProperty_ChannelLayoutForBitmap
+                                                     : kAudioFormatProperty_ChannelLayoutForTag;
+                UInt32 value = bitmap ? layout->mChannelBitmap : layout->mChannelLayoutTag,
+                       bytes = 0;
+                expanded =
+                    AudioFormatGetPropertyInfo(property, sizeof(value), &value, &bytes) == noErr &&
+                    bytes >= offsetof(AudioChannelLayout, mChannelDescriptions) &&
+                    bytes <= 1024 * 1024;
+                if (expanded) {
+                    std::vector<uint8_t> out(bytes);
+                    expanded = AudioFormatGetProperty(property, sizeof(value), &value, &bytes,
+                                                      out.data()) == noErr;
+                    if (expanded) {
+                        buffer = std::move(out);
+                        layout = reinterpret_cast<AudioChannelLayout *>(buffer.data());
+                    }
+                }
+            }
+            if (expanded && layout->mNumberChannelDescriptions == actual &&
+                buffer.size() >= offsetof(AudioChannelLayout, mChannelDescriptions) +
+                                     actual * sizeof(AudioChannelDescription)) {
+                std::array<uint32_t, 16> labels{};
+                for (unsigned i = 0; i < actual; ++i)
+                    labels[i] = layout->mChannelDescriptions[i].mChannelLabel;
+                complete =
+                    sthd_audio::coreaudio_reported_labels(labels.data(), actual, bitmap_layout, *l);
+                if (complete && checked(*l) == STHD_OK) {
+                    std::snprintf(description, capacity,
+                                  "CoreAudio device %u: %u channels from device layout/labels",
+                                  device, actual);
+                    return STHD_OK;
+                }
+            }
+        }
+    }
+    // A stereo preference identifies only two specific slots. It may establish
+    // an entire map only for an actual two-slot endpoint, not a multichannel one.
+    UInt32 pair[2]{};
+    UInt32 pair_size = sizeof(pair);
+    address = {kAudioDevicePropertyPreferredChannelsForStereo, kAudioObjectPropertyScopeOutput,
+               kAudioObjectPropertyElementMain};
+    if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &pair_size, pair) == noErr &&
+        pair_size == sizeof(pair) &&
+        sthd_audio::preferred_stereo_layout(actual, pair[0], pair[1], *l)) {
+        std::snprintf(description, capacity,
+                      "CoreAudio device %u: OS-declared stereo slots L=%u R=%u", device, pair[0],
+                      pair[1]);
+        return STHD_OK;
+    }
+    *l = STHDLayout{};
+    std::snprintf(description, capacity,
+                  "CoreAudio device %u: %u active slots; speaker positions unavailable", device,
+                  actual);
+    return STHD_UNKNOWN_LAYOUT;
 #elif defined(_WIN32) && !defined(STHD_DISABLE_NATIVE_DEVICE)
     HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(init) && init != RPC_E_CHANGED_MODE)
         return STHD_DEVICE_UNAVAILABLE;
     struct Cleanup {
+        IPropertyStore *properties = nullptr;
         IMMDeviceEnumerator *enumerator = nullptr;
         IMMDevice *device = nullptr;
         IAudioClient *client = nullptr;
         WAVEFORMATEX *format = nullptr;
         bool uninit;
         ~Cleanup() {
+            if (properties)
+                properties->Release();
             if (format)
                 CoTaskMemFree(format);
             if (client)
@@ -204,7 +253,8 @@ extern "C" STHDStatus sthd_default_device_layout(STHDLayout *l, char *descriptio
             if (uninit)
                 CoUninitialize();
         }
-    } c{nullptr, nullptr, nullptr, nullptr, SUCCEEDED(init)};
+    } c;
+    c.uninit = SUCCEEDED(init);
     if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
                                 __uuidof(IMMDeviceEnumerator),
                                 reinterpret_cast<void **>(&c.enumerator))) ||
@@ -219,32 +269,22 @@ extern "C" STHDStatus sthd_default_device_layout(STHDLayout *l, char *descriptio
     uint32_t mask = 0;
     if (c.format->wFormatTag == WAVE_FORMAT_EXTENSIBLE && c.format->cbSize >= 22)
         mask = reinterpret_cast<WAVEFORMATEXTENSIBLE *>(c.format)->dwChannelMask;
-    else if (channels == 2)
-        mask = SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT;
-    if (!mask || channels < 2 || channels > 16)
+    if (!mask && SUCCEEDED(c.device->OpenPropertyStore(STGM_READ, &c.properties))) {
+        // Exact SDK PKEY_AudioEndpoint_PhysicalSpeakers, not a count heuristic.
+        static constexpr PROPERTYKEY key{
+            {0x1da5d803, 0xd492, 0x4edd, {0x8c, 0x23, 0xe0, 0xc0, 0xff, 0xee, 0x7f, 0x0e}}, 3};
+        PROPVARIANT value{};
+        if (SUCCEEDED(c.properties->GetValue(key, &value)) && value.vt == VT_UI4)
+            mask = value.ulVal;
+        PropVariantClear(&value);
+    }
+    if (!sthd_audio::wave_mask_layout(channels, mask, *l))
         return STHD_UNKNOWN_LAYOUT;
-    const uint32_t bits[] = {
-        SPEAKER_FRONT_LEFT,      SPEAKER_FRONT_RIGHT,   SPEAKER_FRONT_CENTER,
-        SPEAKER_LOW_FREQUENCY,   SPEAKER_BACK_LEFT,     SPEAKER_BACK_RIGHT,
-        SPEAKER_SIDE_LEFT,       SPEAKER_SIDE_RIGHT,    SPEAKER_TOP_FRONT_LEFT,
-        SPEAKER_TOP_FRONT_RIGHT, SPEAKER_TOP_BACK_LEFT, SPEAKER_TOP_BACK_RIGHT};
-    for (unsigned bit = 0; bit < 32; ++bit)
-        if (mask & (1U << bit)) {
-            bool found = false;
-            for (unsigned s = 0; s < 12; ++s)
-                if (bits[s] == (1U << bit)) {
-                    if (l->channels >= 16)
-                        return STHD_UNKNOWN_LAYOUT;
-                    l->speakers[l->channels++] = STHDSpeaker(s);
-                    found = true;
-                    break;
-                }
-            if (!found)
-                return STHD_UNKNOWN_LAYOUT;
-        }
-    if (l->channels != channels)
-        return STHD_UNKNOWN_LAYOUT;
-    return checked(*l);
+    std::snprintf(description, capacity,
+                  "WASAPI endpoint: %u channels, %lu Hz, device speaker mask 0x%lx", channels,
+                  static_cast<unsigned long>(c.format->nSamplesPerSec),
+                  static_cast<unsigned long>(mask));
+    return STHD_OK;
 #elif defined(STHD_HAVE_PIPEWIRE) && !defined(STHD_DISABLE_NATIVE_DEVICE)
     STHDAudioCapabilities capabilities{};
     auto status = sthd_audio::pipewire_capabilities(capabilities);

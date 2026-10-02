@@ -10,6 +10,69 @@
 #include <thread>
 #include <vector>
 namespace sthd_audio {
+// Validate the speaker positions reported by an OS without changing their
+// physical order. Count, duplicate labels or unnamed discrete ports cannot
+// establish a speaker geometry. All supported floor/height layouts use this.
+inline bool reported_layout_valid(const STHDLayout &layout) {
+    if (layout.channels < 2 || layout.channels > 16)
+        return false;
+    uint32_t seen = 0;
+    for (unsigned i = 0; i < layout.channels; ++i) {
+        unsigned s = unsigned(layout.speakers[i]);
+        if (s >= 16 || (seen & (1U << s)))
+            return false;
+        seen |= 1U << s;
+    }
+    const char *names[] = {"2.0",   "5.1",   "7.1",   "5.1.2",     "5.1.4",       "7.1.2",
+                           "7.1.4", "7.1.6", "9.1.6", "5.1(back)", "5.1.2(back)", "5.1.4(back)"};
+    for (auto name : names) {
+        STHDLayout supported{};
+        sthd_layout_named(name, &supported);
+        uint32_t mask = 0;
+        for (unsigned i = 0; i < supported.channels; ++i)
+            mask |= 1U << unsigned(supported.speakers[i]);
+        if (mask == seen && supported.channels == layout.channels)
+            return true;
+    }
+    return false;
+}
+// WAVE speaker masks explicitly define ascending physical slot order. Zero
+// or an unsupported bit is unknown, even for a two-channel endpoint.
+inline bool wave_mask_layout(uint32_t channels, uint32_t mask, STHDLayout &out) {
+    const uint32_t bits[] = {1, 2, 4, 8, 16, 32, 512, 1024, 4096, 16384, 32768, 131072};
+    STHDLayout value{};
+    for (unsigned bit = 0; bit < 32; ++bit)
+        if (mask & (1U << bit)) {
+            bool known = false;
+            for (unsigned s = 0; s < 12; ++s)
+                if (bits[s] == (1U << bit)) {
+                    if (value.channels >= 16)
+                        return false;
+                    value.speakers[value.channels++] = STHDSpeaker(s);
+                    known = true;
+                    break;
+                }
+            if (!known)
+                return false;
+        }
+    if (value.channels != channels || !reported_layout_valid(value))
+        return false;
+    out = value;
+    return true;
+}
+// An explicit device stereo preference is authoritative even when channel
+// descriptions are Unknown. Never infer multichannel geometry from a count.
+inline bool preferred_stereo_layout(uint32_t channels, uint32_t left, uint32_t right,
+                                    STHDLayout &layout) {
+    if (channels != 2 || left < 1 || left > 2 || right < 1 || right > 2 || left == right)
+        return false;
+    layout = STHDLayout{};
+    layout.channels = 2;
+    layout.speakers[left - 1] = STHD_FL;
+    layout.speakers[right - 1] = STHD_FR;
+    return true;
+}
+
 // Single decoder producer, single native render consumer. Callback side never
 // allocates, locks, decodes, performs file I/O, or calls the renderer.
 struct Ring {
@@ -63,6 +126,10 @@ struct Driver {
     virtual STHDStatus start() = 0;
     virtual STHDStatus finish(uint32_t timeout_ms) = 0;
 };
+#if defined(__APPLE__)
+bool coreaudio_reported_labels(const uint32_t *labels, uint32_t channels, bool bitmap,
+                               STHDLayout &layout);
+#endif
 std::unique_ptr<Driver> make_native(Ring &, const STHDAudioPlan &);
 void native_capabilities(STHDAudioCapabilities &);
 #if defined(STHD_HAVE_PIPEWIRE) && !defined(STHD_DISABLE_NATIVE_DEVICE)

@@ -58,3 +58,5 @@ truehdd -i INPUT.mlp --play --layout 7.1.4
 - Linux: `libtruehdd.so.1.1.0` with SONAME `libtruehdd.so.1` and `libtruehdd.so` link, plus `truehdd`.
 
 Shared libraries expose `STHD_API` C symbols; internal C++ symbols are hidden on ELF. CMake propagates `STHD_SHARED` to linked clients and defines `STHD_BUILDING_LIBRARY` only for the library. Manual Windows consumers should define `STHD_SHARED=1` and link the import library. Keep the DLL next to the executable; keep SO files next to the build executable or install under `lib/` with the install RPATH. Use library destroy functions for opaque objects, and never free borrowed strings with the host allocator. Destroy all sessions before unloading a DLL/SO.
+
+`auto` is resolved from each platform endpoint at run time. Device tags/labels, WAVE speaker masks, PipeWire positions, and an applicable OS-declared stereo pair are mapping evidence; channel counts alone are not. No test-machine channel layout is persisted into the player.
