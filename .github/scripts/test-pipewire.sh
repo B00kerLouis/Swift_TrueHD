@@ -2,6 +2,8 @@
 # Native API integration test: isolated server and a labelled virtual sink.
 set -euo pipefail
 smoke_binary="$1"
+player_binary="$2"
+encoded_fixture="$3"
 export XDG_RUNTIME_DIR
 XDG_RUNTIME_DIR="$(mktemp -d)"
 chmod 700 "$XDG_RUNTIME_DIR"
@@ -37,6 +39,8 @@ while IFS='|' read -r layout count positions; do
   sleep 0.5
   "$smoke_binary" | tee "$XDG_RUNTIME_DIR/result-$layout.log"
   grep -q "channels=$count submitted=48000 consumed=48000" "$XDG_RUNTIME_DIR/result-$layout.log"
+  "$player_binary" "$encoded_fixture" | tee "$XDG_RUNTIME_DIR/player-$layout.log"
+  grep -q "decoded=12345 submitted=12345 consumed=12345" "$XDG_RUNTIME_DIR/player-$layout.log"
 done <<'LAYOUTS'
 2.0|2|FL FR
 5.1|6|FL FR FC LFE SL SR

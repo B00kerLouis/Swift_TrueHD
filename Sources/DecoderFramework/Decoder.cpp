@@ -494,7 +494,8 @@ const char *sthd_status_string(STHDStatus s) {
                                   "out of memory",
                                   "unsupported audio output",
                                   "native audio failure",
-                                  "audio timeout"};
+                                  "audio timeout",
+                                  "cancelled"};
     return unsigned(s) < sizeof(names) / sizeof(names[0]) ? names[unsigned(s)] : "unknown status";
 }
 STHDStatus sthd_decode_access_unit(STHDDecoder *d, const uint8_t *p, size_t n, STHDFrame *f) {

@@ -37,6 +37,7 @@ void usage() {
     std::cout
         << "Usage: truehdd -i INPUT.mlp -o OUTPUT.wav [--layout NAME | --presentation "
            "2|6|8|elements]\n"
+           "Realtime: truehdd play -i INPUT.mlp|- [--layout NAME]\n"
            "Layouts: auto, 2.0, 5.1, 7.1, 5.1.2, 5.1.4, 7.1.2, 7.1.4, 7.1.6, 9.1.6\n"
            "5.1 family also accepts (back) suffix for BL/BR surround labels.\n"
            "  --layout auto            Read the actual default device speaker labels (default)\n"
@@ -205,7 +206,10 @@ int run(const std::vector<std::string> &args) {
     bool verify = false, device = false, layout_selected = false, raw_pcm = false, play = false,
          pcm_fallback = false;
     double gain_db = 0;
-    for (size_t i = 0; i < args.size(); ++i) {
+    const bool play_command = !args.empty() && args[0] == "play";
+    if (play_command)
+        play = true;
+    for (size_t i = play_command ? 1 : 0; i < args.size(); ++i) {
         const std::string &a = args[i];
         auto value = [&]() {
             if (++i >= args.size())
@@ -344,14 +348,35 @@ int run(const std::vector<std::string> &args) {
                                     &layout));
     }
     fs::path source = fs::u8path(input), destination = fs::u8path(output);
-    std::ifstream in(source, std::ios::binary);
-    if (!in)
-        fail("cannot open input: " + input);
-    std::unique_ptr<STHDDecoder, decltype(&sthd_decoder_destroy)> decoder(sthd_decoder_create(),
-                                                                          sthd_decoder_destroy);
-    if (!decoder)
+    std::ifstream file;
+    if (input != "-") {
+        file.open(source, std::ios::binary);
+        if (!file)
+            fail("cannot open input: " + input);
+    }
+#ifdef _WIN32
+    if (input == "-")
+        _setmode(_fileno(stdin), _O_BINARY);
+#endif
+    std::istream &in = input == "-" ? std::cin : file;
+    std::unique_ptr<STHDDecoder, decltype(&sthd_decoder_destroy)> decoder(
+        play ? nullptr : sthd_decoder_create(), sthd_decoder_destroy);
+    if (!play && !decoder)
         fail("out of memory");
-    std::unique_ptr<STHDAudioOutput, decltype(&sthd_audio_close)> audio(nullptr, sthd_audio_close);
+    std::unique_ptr<STHDPlayer, decltype(&sthd_player_destroy)> player(nullptr,
+                                                                       sthd_player_destroy);
+    if (play) {
+        STHDPlayerOptions options{};
+        options.struct_size = sizeof(options);
+        options.gain = float(std::pow(10.0, gain_db / 20));
+        options.explicit_layout = name != "auto";
+        options.layout = layout;
+        options.allow_pcm_fallback = pcm_fallback;
+        char message[256];
+        player.reset(sthd_player_create(&options, message, sizeof(message)));
+        if (!player)
+            fail(message);
+    }
     std::unique_ptr<Wave> wave;
     std::unique_ptr<File> sidecar;
     STHDFrame frame{};
@@ -373,32 +398,20 @@ int run(const std::vector<std::string> &args) {
         in.read(reinterpret_cast<char *>(bytes.data() + 4), std::streamsize(size - 4));
         if (size_t(in.gcount()) != size - 4)
             fail("truncated payload at AU " + std::to_string(au));
-        auto status = sthd_decode_access_unit(decoder.get(), bytes.data(), size, &frame);
-        if (status != STHD_OK)
-            fail("AU " + std::to_string(au) + ": " + sthd_status_string(status) + ": " +
-                 sthd_decoder_error(decoder.get()));
         if (play) {
-            if (!audio) {
-                STHDAudioCapabilities caps{};
-                check(sthd_audio_capabilities(&caps));
-                STHDAudioPlan plan{};
-                check(sthd_audio_plan(&frame, &caps, name == "auto" ? nullptr : &layout,
-                                      pcm_fallback ? 1 : 0, &plan));
-                char message[256];
-                audio.reset(sthd_audio_open(&plan, message, sizeof(message)));
-                if (!audio)
-                    fail(message);
-                std::cout << "Playback backend=" << sthd_audio_backend_name(plan.backend)
-                          << ", mode=" << plan.mode << ", positional feeds=" << plan.object_count
-                          << "\n";
-            }
-            if (interrupted)
-                fail("decode cancelled");
-            auto status =
-                sthd_audio_write(audio.get(), &frame, float(std::pow(10.0, gain_db / 20)), 5000);
+            size_t consumed = 0;
+            auto status = sthd_player_feed(player.get(), bytes.data(), size, &consumed, 5000);
             if (status != STHD_OK)
                 fail(std::string(sthd_status_string(status)) + ": " +
-                     sthd_audio_error(audio.get()));
+                     sthd_player_error(player.get()));
+            if (consumed != size)
+                fail("player did not accept the complete AU");
+            check(sthd_player_last_frame(player.get(), &frame));
+        } else {
+            auto status = sthd_decode_access_unit(decoder.get(), bytes.data(), size, &frame);
+            if (status != STHD_OK)
+                fail("AU " + std::to_string(au) + ": " + sthd_status_string(status) + ": " +
+                     sthd_decoder_error(decoder.get()));
         }
         if (!verify && !output.empty()) {
             if (presentation == 3 && frame.presentations < 4)
@@ -436,19 +449,22 @@ int run(const std::vector<std::string> &args) {
         samples += frame.samples;
         ++au;
         if (frame.samples < 40) {
-            if (in.peek() != EOF)
+            if (input != "-" && in.peek() != EOF)
                 fail("data follows final PCM trim marker");
             break;
         }
     }
     if (!au)
         fail("input contains no access units");
-    if (audio) {
-        check(sthd_audio_drain(audio.get(), 5000));
-        STHDAudioStats stats{};
-        sthd_audio_stats(audio.get(), &stats);
-        std::cout << "Playback consumed=" << stats.consumed_frames
-                  << ", underruns=" << stats.underruns << "\n";
+    if (player) {
+        auto status = sthd_player_finish(player.get(), 5000);
+        if (status != STHD_OK)
+            fail(std::string(sthd_status_string(status)) + ": " + sthd_player_error(player.get()));
+        STHDPlayerStats stats{};
+        check(sthd_player_stats(player.get(), &stats));
+        std::cout << "Playback backend=" << sthd_audio_backend_name(stats.backend)
+                  << ", consumed=" << stats.audio.consumed_frames
+                  << ", underruns=" << stats.audio.underruns << "\n";
     }
     if (wave) {
         wave->finish();

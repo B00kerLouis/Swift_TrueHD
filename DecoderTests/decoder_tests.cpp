@@ -211,6 +211,44 @@ void compare(std::ifstream &ref, const int32_t *pcm, size_t count, uint64_t au, 
                    " sample " + std::to_string(i));
     }
 }
+void player_transport_tests() {
+    STHDPlayerOptions options{};
+    options.struct_size = sizeof(options);
+    options.gain = 0;
+    char error[256];
+    for (size_t length : {1U, 2U, 3U, 4U, 17U}) {
+        std::unique_ptr<STHDPlayer, decltype(&sthd_player_destroy)> player(
+            sthd_player_create(&options, error, sizeof(error)), sthd_player_destroy);
+        expect(bool(player), "device-independent player construction");
+        std::array<uint8_t, 17> packet{};
+        packet[1] = 64;
+        size_t consumed = 0;
+        expect(sthd_player_feed(player.get(), packet.data(), length, &consumed, 0) == STHD_OK &&
+                   consumed == length,
+               "partial header/payload accepted");
+        STHDPlayerStats stats{};
+        sthd_player_stats(player.get(), &stats);
+        expect(stats.buffered_bytes == length && stats.decoded_access_units == 0,
+               "bounded incomplete AU state");
+        expect(sthd_player_finish(player.get(), 0) == STHD_CORRUPT_STREAM,
+               "truncated stream rejected before output opens");
+    }
+    std::unique_ptr<STHDPlayer, decltype(&sthd_player_destroy)> player(
+        sthd_player_create(&options, error, sizeof(error)), sthd_player_destroy);
+    uint8_t bad[4]{};
+    size_t consumed = 0;
+    expect(sthd_player_feed(player.get(), bad, 4, &consumed, 0) == STHD_CORRUPT_STREAM &&
+               consumed == 4,
+           "invalid live AU length");
+    expect(sthd_player_finish(player.get(), 0) == STHD_CORRUPT_STREAM,
+           "fatal stream error is sticky");
+    expect(sthd_player_error(player.get())[0] != 0, "player reports error detail");
+    player.reset(sthd_player_create(&options, error, sizeof(error)));
+    expect(sthd_player_finish(player.get(), 0) == STHD_CORRUPT_STREAM, "empty stream rejected");
+    options.struct_size = 1;
+    expect(sthd_player_create(&options, error, sizeof(error)) == nullptr,
+           "player options ABI size check");
+}
 void audio_policy_tests() {
     auto f = fixture();
     STHDDecodedPresentation v{};
@@ -413,6 +451,7 @@ int main(int argc, char **argv) {
     try {
         renderer_tests();
         audio_policy_tests();
+        player_transport_tests();
         if (argc >= 3 && std::string(argv[1]) == "--stream")
             stream_tests(std::filesystem::u8path(argv[2]), argc >= 4 ? argv[3] : "");
         else if ((argc == 3 || argc == 4) && std::string(argv[1]) == "--generate")

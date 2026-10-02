@@ -9,7 +9,21 @@ extern "C" {
 #define STHD_MAX_CHANNELS 16
 #define STHD_MAX_SAMPLES 40
 #define STHD_MAX_ACCESS_UNIT 8190
-#define STHD_ABI_VERSION 2
+#define STHD_ABI_VERSION 3
+
+/* Only C ABI functions cross the shared-library boundary. Hosts never delete
+   opaque objects or free borrowed strings with their own runtime allocator. */
+#if defined(_WIN32) && defined(STHD_SHARED)
+#if defined(STHD_BUILDING_LIBRARY)
+#define STHD_API __declspec(dllexport)
+#else
+#define STHD_API __declspec(dllimport)
+#endif
+#elif defined(__GNUC__)
+#define STHD_API __attribute__((visibility("default")))
+#else
+#define STHD_API
+#endif
 
 typedef enum STHDStatus {
     STHD_OK = 0,
@@ -23,7 +37,8 @@ typedef enum STHDStatus {
     STHD_OUT_OF_MEMORY,
     STHD_UNSUPPORTED_OUTPUT,
     STHD_AUDIO_FAILURE,
-    STHD_TIMEOUT
+    STHD_TIMEOUT,
+    STHD_CANCELLED
 } STHDStatus;
 typedef enum STHDSpeaker {
     STHD_FL,
@@ -68,27 +83,27 @@ typedef struct STHDDecoder STHDDecoder;
 
 /* One instance per stream, externally serialized. AU decode is transactional:
    errors leave stream state intact. A new stream must begin at a major sync. */
-STHDDecoder *sthd_decoder_create(void);
-void sthd_decoder_destroy(STHDDecoder *decoder);
-void sthd_decoder_reset(STHDDecoder *decoder);
-const char *sthd_decoder_error(const STHDDecoder *decoder);
-const char *sthd_status_string(STHDStatus status);
-STHDStatus sthd_decode_access_unit(STHDDecoder *decoder, const uint8_t *data, size_t bytes,
-                                   STHDFrame *frame);
+STHD_API STHDDecoder *sthd_decoder_create(void);
+STHD_API void sthd_decoder_destroy(STHDDecoder *decoder);
+STHD_API void sthd_decoder_reset(STHDDecoder *decoder);
+STHD_API const char *sthd_decoder_error(const STHDDecoder *decoder);
+STHD_API const char *sthd_status_string(STHDStatus status);
+STHD_API STHDStatus sthd_decode_access_unit(STHDDecoder *decoder, const uint8_t *data, size_t bytes,
+                                            STHDFrame *frame);
 /* Input/output may not overlap. Float output is normalized to 24-bit full scale,
    may exceed +/-1 after summing, and is never limited or clipped by the library.
    gain=1 preserves encoded level. Render only after successful decode. */
-STHDStatus sthd_render(const STHDFrame *frame, const STHDLayout *layout, float gain,
-                       float *interleaved, size_t capacity);
-STHDStatus sthd_layout_named(const char *name, STHDLayout *layout);
-const char *sthd_speaker_name(STHDSpeaker speaker);
+STHD_API STHDStatus sthd_render(const STHDFrame *frame, const STHDLayout *layout, float gain,
+                                float *interleaved, size_t capacity);
+STHD_API STHDStatus sthd_layout_named(const char *name, STHDLayout *layout);
+STHD_API const char *sthd_speaker_name(STHDSpeaker speaker);
 /* WAVE mask is zero for layouts with WAVE-unrepresentable wide/middle channels.
    Labels remain available in STHDLayout and the CLI sidecar. */
-uint32_t sthd_wave_channel_mask(const STHDLayout *layout);
+STHD_API uint32_t sthd_wave_channel_mask(const STHDLayout *layout);
 /* Read actual default-device labels. Unknown/discrete labels are returned as an
    error instead of inventing height speakers from a channel count. */
-STHDStatus sthd_default_device_layout(STHDLayout *layout, char *description,
-                                      size_t description_capacity);
+STHD_API STHDStatus sthd_default_device_layout(STHDLayout *layout, char *description,
+                                               size_t description_capacity);
 
 /* Borrowed views retain the bitstream's distinction between channel PCM and
    positional feeds. View pointers are valid while the source frame is alive. */
@@ -110,8 +125,8 @@ typedef struct STHDDecodedPresentation {
     uint32_t object_count;
     STHDAudioObject objects[STHD_MAX_CHANNELS - 1];
 } STHDDecodedPresentation;
-STHDStatus sthd_presentation(const STHDFrame *frame, STHDPresentationKind kind,
-                             STHDDecodedPresentation *view);
+STHD_API STHDStatus sthd_presentation(const STHDFrame *frame, STHDPresentationKind kind,
+                                      STHDDecodedPresentation *view);
 
 typedef enum STHDAudioBackend {
     STHD_AUDIO_NONE,
@@ -150,29 +165,68 @@ typedef struct STHDAudioPlan {
 typedef struct STHDAudioOutput STHDAudioOutput;
 /* Queries capabilities without starting playback. Unknown/discrete PCM labels
    remain unknown even when a known object-renderer mask is available. */
-STHDStatus sthd_audio_capabilities(STHDAudioCapabilities *capabilities);
+STHD_API STHDStatus sthd_audio_capabilities(STHDAudioCapabilities *capabilities);
 /* Ordinary channel presentations always choose the native PCM path. Immersive
    Windows feeds prefer positional objects, then native static objects. A PCM
    fallback requires allow_pcm_fallback=1. An explicit layout resolves unknown
    discrete labels only when the hardware channel count agrees. */
-STHDStatus sthd_audio_plan(const STHDFrame *frame, const STHDAudioCapabilities *capabilities,
-                           const STHDLayout *explicit_pcm_layout, int allow_pcm_fallback,
-                           STHDAudioPlan *plan);
-STHDAudioOutput *sthd_audio_open(const STHDAudioPlan *plan, char *error, size_t error_capacity);
+STHD_API STHDStatus sthd_audio_plan(const STHDFrame *frame,
+                                    const STHDAudioCapabilities *capabilities,
+                                    const STHDLayout *explicit_pcm_layout, int allow_pcm_fallback,
+                                    STHDAudioPlan *plan);
+STHD_API STHDAudioOutput *sthd_audio_open(const STHDAudioPlan *plan, char *error,
+                                          size_t error_capacity);
 /* Single producer; native backend consumes a bounded queue. Timeout permits
    hosts to cancel or report device loss. Playback gain is explicit. */
-STHDStatus sthd_audio_write(STHDAudioOutput *output, const STHDFrame *frame, float gain,
-                            uint32_t timeout_ms);
-STHDStatus sthd_audio_drain(STHDAudioOutput *output, uint32_t timeout_ms);
+STHD_API STHDStatus sthd_audio_write(STHDAudioOutput *output, const STHDFrame *frame, float gain,
+                                     uint32_t timeout_ms);
+STHD_API STHDStatus sthd_audio_drain(STHDAudioOutput *output, uint32_t timeout_ms);
 typedef struct STHDAudioStats {
     uint64_t submitted_frames, consumed_frames, underruns;
     uint32_t queue_capacity_frames;
 } STHDAudioStats;
-STHDStatus sthd_audio_stats(const STHDAudioOutput *output, STHDAudioStats *stats);
-uint64_t sthd_audio_underruns(const STHDAudioOutput *output);
-const char *sthd_audio_error(const STHDAudioOutput *output);
-void sthd_audio_close(STHDAudioOutput *output);
-const char *sthd_audio_backend_name(STHDAudioBackend backend);
+STHD_API STHDStatus sthd_audio_stats(const STHDAudioOutput *output, STHDAudioStats *stats);
+STHD_API uint64_t sthd_audio_underruns(const STHDAudioOutput *output);
+STHD_API const char *sthd_audio_error(const STHDAudioOutput *output);
+STHD_API void sthd_audio_close(STHDAudioOutput *output);
+STHD_API const char *sthd_audio_backend_name(STHDAudioBackend backend);
+
+/* Streaming playback owns decode, byte framing, output negotiation and FIFO.
+   Feed calls are serialized by the host; cancel alone may run concurrently.
+   Construction is device-independent; native output opens after the first AU. */
+typedef struct STHDPlayerOptions {
+    uint32_t struct_size;
+    float gain;
+    int explicit_layout, allow_pcm_fallback;
+    STHDLayout layout;
+} STHDPlayerOptions;
+typedef struct STHDPlayerStats {
+    uint64_t accepted_bytes, decoded_access_units, decoded_samples;
+    STHDAudioStats audio;
+    size_t buffered_bytes;
+    uint32_t pending_frame, finished, cancelled, output_channels;
+    STHDAudioBackend backend;
+    STHDAudioMode mode;
+} STHDPlayerStats;
+typedef struct STHDPlayer STHDPlayer;
+STHD_API uint32_t sthd_abi_version(void);
+STHD_API STHDPlayer *sthd_player_create(const STHDPlayerOptions *options, char *error,
+                                        size_t error_capacity);
+/* consumed includes bytes retained in the bounded AU buffer. On TIMEOUT,
+   advance input by consumed and retry the remaining bytes (or feed NULL/0 to
+   retry the pending frame). A timed-out AU is never decoded/enqueued twice. */
+STHD_API STHDStatus sthd_player_feed(STHDPlayer *player, const uint8_t *data, size_t bytes,
+                                     size_t *consumed, uint32_t timeout_ms);
+/* Explicit end-of-input rejects truncated headers/payloads, enqueues a pending
+   frame, and drains the device. TIMEOUT may be retried; success closes input. */
+STHD_API STHDStatus sthd_player_finish(STHDPlayer *player, uint32_t timeout_ms);
+STHD_API STHDStatus sthd_player_stats(const STHDPlayer *player, STHDPlayerStats *stats);
+STHD_API STHDStatus sthd_player_last_frame(const STHDPlayer *player, STHDFrame *frame);
+STHD_API const char *sthd_player_error(const STHDPlayer *player);
+STHD_API void sthd_player_cancel(STHDPlayer *player);
+STHD_API void sthd_player_destroy(STHDPlayer *player);
+/* Thread-safe cancellation flag; destruction remains externally serialized. */
+STHD_API void sthd_audio_cancel(STHDAudioOutput *output);
 
 #ifdef __cplusplus
 }

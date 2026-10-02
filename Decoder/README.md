@@ -76,3 +76,7 @@ sthd_decoder_destroy(decoder);
 详见 [码流分析](BITSTREAM.md) 和 [测试记录](VALIDATION.md)。
 
 GitHub Actions workflow 为 `.github/workflows/native-build.yml`：macOS 通过 Xcode 构建 encoder 和 decoder；Windows/MSVC 与 Linux/GCC 构建 decoder，并使用 macOS 原 encoder 生成的 fixture 做跨平台 PCM 比对。Linux 另测试所有布局的实际 PipeWire 虚拟 sink 播放。
+
+## Encoded real-time playback API
+
+C ABI v3 adds `sthd_player_create/feed/finish/cancel/stats/last_frame/destroy` for arbitrary encoded byte chunks. CLI `truehdd play -i INPUT.mlp` and `-i -` use the same session. Windows/Linux CMake products are shared `truehdd.dll` / `libtruehdd.so`, with C-only exported API. See [PLAY_API.md](PLAY_API.md) for lifecycle, backpressure and ownership.

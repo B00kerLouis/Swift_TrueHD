@@ -442,6 +442,8 @@ struct PipeWireDriver final : Driver {
         if (result < 0)
             return STHD_AUDIO_FAILURE;
         while (!drained.load()) {
+            if (ring.stopping.load())
+                return STHD_CANCELLED;
             if (ring.failure.load() != STHD_OK)
                 return ring.failure.load();
             if (std::chrono::steady_clock::now() >= end)

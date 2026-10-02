@@ -21,6 +21,7 @@
 		D20000000000000000000050 = { isa = PBXBuildFile; fileRef = D20000000000000000000046; };
 		D20000000000000000000051 = { isa = PBXBuildFile; fileRef = D20000000000000000000047; };
 		D20000000000000000000052 = { isa = PBXBuildFile; fileRef = D20000000000000000000048; };
+		D20000000000000000000065 = { isa = PBXBuildFile; fileRef = D20000000000000000000064; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -53,6 +54,7 @@
 		D20000000000000000000047 = { isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Sources/DecoderFramework/NativeAudio.cpp; sourceTree = "<group>"; };
 		D20000000000000000000048 = { isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Sources/DecoderFramework/PipeWireAudio.cpp; sourceTree = "<group>"; };
 		D20000000000000000000049 = { isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Sources/DecoderFramework/AudioBackend.hpp; sourceTree = "<group>"; };
+		D20000000000000000000064 = { isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Sources/DecoderFramework/Player.cpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -128,7 +130,7 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		D2000000000000000000001E = { isa = PBXGroup; name = "Decoder Framework (C/C++)"; children = (D20000000000000000000046,D20000000000000000000047,D20000000000000000000048,D20000000000000000000049,D20000000000000000000001,D20000000000000000000002,D20000000000000000000003,D20000000000000000000004,D20000000000000000000005,D20000000000000000000006,); sourceTree = "<group>"; };
+		D2000000000000000000001E = { isa = PBXGroup; name = "Decoder Framework (C/C++)"; children = (D20000000000000000000064,D20000000000000000000046,D20000000000000000000047,D20000000000000000000048,D20000000000000000000049,D20000000000000000000001,D20000000000000000000002,D20000000000000000000003,D20000000000000000000004,D20000000000000000000005,D20000000000000000000006,); sourceTree = "<group>"; };
 		D2000000000000000000001F = { isa = PBXGroup; name = "Decoder CLI (C++)"; children = (D20000000000000000000007,); sourceTree = "<group>"; };
 		D20000000000000000000020 = { isa = PBXGroup; name = "Decoder system frameworks"; children = (D2000000000000000000000A,D2000000000000000000000B,); sourceTree = "<group>"; };
 /* End PBXGroup section */
@@ -304,7 +306,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		D20000000000000000000029 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D20000000000000000000050,D20000000000000000000051,D20000000000000000000052,D20000000000000000000014,D20000000000000000000015,D20000000000000000000016,D20000000000000000000017, ); runOnlyForDeploymentPostprocessing = 0; };
+		D20000000000000000000029 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D20000000000000000000065,D20000000000000000000050,D20000000000000000000051,D20000000000000000000052,D20000000000000000000014,D20000000000000000000015,D20000000000000000000016,D20000000000000000000017, ); runOnlyForDeploymentPostprocessing = 0; };
 		D2000000000000000000002A = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D20000000000000000000019, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 

@@ -8,7 +8,7 @@ This project has a macOS Swift 6 TrueHD encoder and a separate portable C/C++17 
 - `libtruehda` -> `turehda` is the existing macOS encoder graph.
 - `decoder_framework` -> `decoder_cli` is the new independent decoder graph. Products: static `libtruehdd.framework` and standalone `truehdd`; macOS 11+, arm64 and x86_64.
 - Decoder sources: `Sources/DecoderFramework` and `Sources/DecoderCLI`. C ABI: `Sources/DecoderFramework/include/TrueHDDecoder.h`.
-- Portable CMake builds only the decoder on Windows/Linux (also usable for C/C++ testing on macOS). Require C++17, C, exceptions, standard library; no Swift Package Manager. Windows native discovery uses WASAPI; macOS uses CoreAudio/AudioToolbox; Linux playback uses PipeWire development headers/libraries; legacy ALSA discovery remains optional.
+- Portable CMake builds only the decoder on Windows/Linux (also usable for C/C++ testing on macOS). Require C++17, C, exceptions, standard library; no Swift Package Manager. Windows produces truehdd.dll and an import library; Linux produces libtruehdd.so with SONAME 1. Windows native discovery uses WASAPI; macOS uses CoreAudio/AudioToolbox; Linux playback uses PipeWire development headers/libraries; legacy ALSA discovery remains optional.
 - `DecoderTests` is a separate C/C++ test executable in CMake, outside the existing Swift test group. Do not add decoder sources to the Swift encoder targets.
 
 ## State, storage and concurrency
@@ -46,4 +46,6 @@ Supported syntax is the current encoder's 48 kHz FBA profile, FIR/Huffman, indep
 
 The encoder performs spatial reduction before compression. Round-trip losslessness refers to encoded element PCM, not original IAB source tracks. The room-coordinate equal-power renderer is not validated as bit-identical to Dolby's renderer. Front-wide outputs may be silent because the current fixed basis has no front-wide anchors. CoreAudio silent playback is verified locally. The GitHub workflow builds encoder/decoder on macOS, decoder on Windows/MSVC and Linux/GCC, compares real encoder fixture PCM, and exercises labelled PipeWire virtual sinks. Physical Windows speaker/Spatial Sound rendering still requires a Windows device. See `Decoder/README.md`, `Decoder/BITSTREAM.md`, and `Decoder/VALIDATION.md` for detailed records.
 
-See `Decoder/AUDIO_ARCHITECTURE.md` for C ABI v2 presentation/object views, routing, normalized room coordinate conversion, explicit downmix, queue lifetimes and native error behavior. Preserve unrelated pre-existing encoder edits when staging Git changes.
+See `Decoder/AUDIO_ARCHITECTURE.md` for C ABI v3 presentation/object views, routing, normalized room coordinate conversion, explicit downmix, queue lifetimes and native error behavior. Preserve unrelated pre-existing encoder edits when staging Git changes.
+
+Real-time encoded input is owned by `Sources/DecoderFramework/Player.cpp`: one bounded AU buffer, one pending decoded frame and the existing native FIFO. Respect consumed byte counts on timeout and retain pending frames for retry. `sthd_player_cancel` and `sthd_audio_cancel` signal atomic cancellation; destruction and other producer calls are serialized. Update `Decoder/PLAY_API.md` with any lifecycle/ABI changes.

@@ -235,7 +235,12 @@ struct CoreAudioDriver final : Driver {
         auto duration = std::chrono::milliseconds(uint64_t(tail * 1000 + 1));
         if (std::chrono::steady_clock::now() + duration > deadline)
             return STHD_TIMEOUT;
-        std::this_thread::sleep_for(duration);
+        auto tail_end = std::chrono::steady_clock::now() + duration;
+        while (std::chrono::steady_clock::now() < tail_end) {
+            if (ring.stopping.load())
+                return STHD_CANCELLED;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
         return ring.failure.load();
     }
 };
@@ -566,6 +571,8 @@ struct WindowsDriver final : Driver {
     STHDStatus finish(uint32_t timeout) override {
         auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
         while (!done.load()) {
+            if (ring.stopping.load())
+                return STHD_CANCELLED;
             if (ring.failure.load() != STHD_OK)
                 return ring.failure.load();
             if (std::chrono::steady_clock::now() >= end)

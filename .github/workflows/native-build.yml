@@ -40,6 +40,7 @@ jobs:
           Build/Portable/decoder_tests --stream Build/fixture/synthetic.mlp Build/fixture/source
           Build/Products/Release/truehdd -i Build/fixture/synthetic.mlp -o Build/fixture/decoded.pcm --presentation 8 --format s24le
           cmp Build/fixture/decoded.pcm Build/fixture/source.8.pcm
+          Build/Portable/truehdd play --help
       - uses: actions/upload-artifact@v4
         with:
           name: decoder-test-fixture
@@ -82,7 +83,9 @@ jobs:
           name: windows-decoder-products
           path: |
             Build/Portable/Release/truehdd.exe
-            Build/Portable/Release/decoder_framework.lib
+            Build/Portable/Release/truehdd.dll
+            Build/Portable/Release/truehdd.lib
+            Sources/DecoderFramework/include/TrueHDDecoder.h
           if-no-files-found: error
   linux:
     name: Linux GCC and PipeWire decoder
@@ -105,8 +108,11 @@ jobs:
           Build/Portable/decoder_tests --stream Build/fixture/synthetic.mlp Build/fixture/source
           Build/Portable/truehdd -i Build/fixture/synthetic.mlp -o Build/fixture/decoded.pcm --presentation 8 --format s24le
           cmp Build/fixture/decoded.pcm Build/fixture/source.8.pcm
+          test -f Build/Portable/libtruehdd.so
+          nm -D --defined-only Build/Portable/libtruehdd.so | grep 'sthd_player_feed'
+          readelf -d Build/Portable/truehdd | grep 'libtruehdd.so.1'
       - name: Exercise actual PipeWire playback for all layouts
-        run: dbus-run-session -- bash .github/scripts/test-pipewire.sh "$PWD/Build/Portable/audio_smoke"
+        run: dbus-run-session -- bash .github/scripts/test-pipewire.sh "$PWD/Build/Portable/audio_smoke" "$PWD/Build/Portable/player_smoke" "$PWD/Build/fixture/synthetic.mlp"
       - name: Address and undefined behavior sanitizers
         run: |
           cmake -S . -B Build/Sanitized -DCMAKE_BUILD_TYPE=Debug -DSTHD_NATIVE_DEVICE=OFF -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
@@ -118,5 +124,6 @@ jobs:
           name: linux-decoder-products
           path: |
             Build/Portable/truehdd
-            Build/Portable/libdecoder_framework.a
+            Build/Portable/libtruehdd.so*
+            Sources/DecoderFramework/include/TrueHDDecoder.h
           if-no-files-found: error

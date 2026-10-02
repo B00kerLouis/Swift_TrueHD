@@ -99,3 +99,19 @@ PCM 输出目录为本机 `Build/DecodePCM/2026-10-02`，有 58 个 full-program
 Workflow `.github/workflows/native-build.yml` 构建 macOS encoder/decoder、Windows MSVC decoder 和 Linux GCC/PipeWire decoder；macOS 原 encoder 生成小型 fixture，三平台验证相同 PCM。Linux 集成测试启动隔离 PipeWire/WirePlumber server 和带正确 positions 的 virtual sink，验证全部布局的格式协商、实际 FIFO consumption 和 drain。Actions 的具体成功状态和 run URL 由实际执行结果报告，不以本机交叉编译代替。
 
 物理多通道扬声器与 Windows Spatial Sound/耳机 HRTF 仍需对应设备实播。CI virtual sink 可验证 native API 调度和声道协商，不等同于硬件声学验证。
+
+
+## Encoded streaming player / DLL / SO follow-up
+
+C ABI v3 adds a real-time encoded-input player with arbitrary chunk framing, exact consumed-byte progress, one retained pending PCM frame on backpressure, retryable finish, cancellation and copied last-frame/statistics APIs. CLI `play` and binary stdin use the same player. Windows/Linux build shared DLL/SO and export C ABI only.
+
+Local CoreAudio complete-program tests used gain zero to verify actual scheduling without audible output:
+
+| Stream | Accepted bytes | Decoded AUs | Decoded / submitted / consumed frames | Zero-timeout retries | Underruns |
+|---|---:|---:|---:|---:|---:|
+| NaturesFury-16 | 103,030,720 | 130,000 | 5,200,000 / 5,200,000 / 5,200,000 | 64,649 | 0 |
+| TBH-16 | 242,719,220 | 275,900 | 11,036,000 / 11,036,000 / 11,036,000 | 136,651 | 0 |
+
+Fragment sizes include 1, 3, 7, 65,536, 5 and 8,191 bytes, so AU boundaries are not supplied by the test caller. Zero-timeout retries close without duplicate decode/enqueue; final counters match exact programme sample count. The synthetic fixture verifies 12,345-frame final trim, last frame timeline, idempotent finish, input refusal after finish, and active/cross-thread cancellation. Partial headers/payloads, invalid lengths, empty streams and ABI options size are tested before opening a device. Local native player tests also pass ASan/UBSan.
+
+Local MinGW build produces `truehdd.dll` and confirms all `sthd_player_*` exported symbols. Linux target builds an ELF shared `libtruehdd.so` with versioned SONAME. Actions package DLL/import library or SO and header, link/run C ABI tests against the shared products, and play encoded fragments through each labelled PipeWire sink. Physical Windows Spatial Sound playback remains a hardware validation boundary.

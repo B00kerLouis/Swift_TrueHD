@@ -192,6 +192,8 @@ STHDStatus sthd_audio_write(STHDAudioOutput *o, const STHDFrame *f, float gain,
                             uint32_t timeout) try {
     if (!o || !f || !std::isfinite(gain) || gain < 0 || o->ring.draining.load())
         return STHD_INVALID_ARGUMENT;
+    if (o->ring.stopping.load())
+        return STHD_CANCELLED;
     auto failure = o->ring.failure.load();
     if (failure != STHD_OK)
         return failure;
@@ -222,6 +224,8 @@ STHDStatus sthd_audio_write(STHDAudioOutput *o, const STHDFrame *f, float gain,
     }
     auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
     while (!o->ring.push(pcm.data(), f->samples)) {
+        if (o->ring.stopping.load())
+            return STHD_CANCELLED;
         auto s = o->ring.failure.load();
         if (s != STHD_OK)
             return s;
@@ -242,6 +246,8 @@ STHDStatus sthd_audio_write(STHDAudioOutput *o, const STHDFrame *f, float gain,
 STHDStatus sthd_audio_drain(STHDAudioOutput *o, uint32_t timeout) try {
     if (!o)
         return STHD_INVALID_ARGUMENT;
+    if (o->ring.stopping.load())
+        return STHD_CANCELLED;
     o->ring.draining.store(true);
     if (!o->ring.started.load()) {
         auto s = o->driver->start();
@@ -249,7 +255,8 @@ STHDStatus sthd_audio_drain(STHDAudioOutput *o, uint32_t timeout) try {
             return s;
         o->ring.started.store(true);
     }
-    return o->driver->finish(timeout);
+    auto result = o->driver->finish(timeout);
+    return o->ring.stopping.load() ? STHD_CANCELLED : result;
 } catch (...) {
     return STHD_AUDIO_FAILURE;
 }
@@ -271,6 +278,10 @@ const char *sthd_audio_error(const STHDAudioOutput *o) {
     return o->driver->error[0] ? o->driver->error : sthd_status_string(status);
 }
 uint64_t sthd_audio_underruns(const STHDAudioOutput *o) { return o ? o->ring.underruns.load() : 0; }
+void sthd_audio_cancel(STHDAudioOutput *o) {
+    if (o)
+        o->ring.stopping.store(true);
+}
 void sthd_audio_close(STHDAudioOutput *o) {
     if (o)
         o->ring.stopping.store(true);
