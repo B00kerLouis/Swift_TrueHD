@@ -118,8 +118,8 @@ jobs:
         with:
           name: decoder-test-fixture
           path: Build/fixture
-      - name: Install native audio build and test dependencies
-        run: sudo apt-get update && sudo apt-get install -y libpipewire-0.3-dev libasound2-dev pipewire pipewire-bin wireplumber dbus
+      - name: Install native audio and FFmpeg build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpipewire-0.3-dev libasound2-dev pipewire pipewire-bin wireplumber dbus nasm
       - name: Build and validate decoder and native channel plans
         run: |
           cmake -S . -B Build/Portable -DCMAKE_BUILD_TYPE=Release
