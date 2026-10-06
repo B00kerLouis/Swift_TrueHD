@@ -11,6 +11,7 @@ Tests/
 
 # Generated elementary streams, companion records, and source masters.
 *.mlp
+!Integrations/FFmpeg/fixtures/*.mlp
 *.mll
 *.log
 *.wav

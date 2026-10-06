@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LGPL-2.1-or-later
 #include "include/TrueHDDecoder.h"
 #include <algorithm>
 #include <array>
@@ -233,10 +233,8 @@ STHDStatus sthd_render(const STHDFrame *f, const STHDLayout *l, float gain, floa
     if (!immersive) {
         unsigned layer = l->channels == 2 ? 0 : (l->channels == 6 ? 1 : 2);
         if (f->presentations == 3 && layer < 2) {
-            // The project's plain encoder stores cumulative channel subsets,
-            // not a complete eight-channel fold in the first two layers.
-            // Rendering therefore downmixes the full 7.1 bed; raw extraction
-            // still exposes the bitstream presentations without alteration.
+            // For cumulative channel subsets, form the requested downmix from
+            // the complete 7.1 presentation. Raw extraction preserves encoded PCM.
             constexpr double surround_gain = 0.7071067811865475244;
             for (unsigned n = 0; n < f->samples; ++n)
                 for (unsigned c = 0; c < l->channels; ++c) {
@@ -327,6 +325,59 @@ STHDStatus sthd_render(const STHDFrame *f, const STHDLayout *l, float gain, floa
                 sum += f->pcm[elements ? 3 : 2][n * channels + c] * gains[c][speaker];
             out[n * l->channels + speaker] = float(sum * scale);
         }
+    return STHD_OK;
+} catch (...) {
+    return STHD_OUT_OF_MEMORY;
+}
+STHDStatus sthd_render_motion(const STHDFrame *f, const STHDFrameMotion *motion,
+                              const STHDLayout *layout, float gain, float *out,
+                              size_t capacity) try {
+    if (!f || !motion || !layout || !out || !valid(*layout) || !std::isfinite(gain) || gain < 0 ||
+        motion->samples != f->samples || motion->first_sample != f->first_sample ||
+        f->samples < 1 || f->samples > 40 || f->sample_rate != 48000 ||
+        f->presentations < 3 || f->presentations > 4 ||
+        f->channels[0] != 2 || f->channels[1] != 6 || f->channels[2] != 8 ||
+        (f->presentations == 4 &&
+         ((f->element_channels != 12 && f->element_channels != 14 && f->element_channels != 16) ||
+          f->channels[3] != f->element_channels)))
+        return STHD_INVALID_ARGUMENT;
+    if (f->presentations != 4)
+        return sthd_render(f, layout, gain, out, capacity);
+    bool spatial_layout = false;
+    for (unsigned c = 0; c < layout->channels && c < 16; ++c)
+        spatial_layout |= layout->speakers[c] >= STHD_TFL;
+    if (!spatial_layout)
+        return sthd_render(f, layout, gain, out, capacity);
+    if (motion->channels != f->element_channels ||
+        motion->valid_samples != ((uint64_t(1) << f->samples) - 1))
+        return STHD_UNKNOWN_LAYOUT;
+    bool constant = true;
+    for (unsigned n = 1; n < f->samples; ++n)
+        if (std::memcmp(motion->positions[0], motion->positions[n],
+                        motion->channels * sizeof(STHDPosition))) {
+            constant = false;
+            break;
+        }
+    if (constant) {
+        STHDFrame fixed = *f;
+        fixed.positions_valid = 1;
+        std::copy_n(motion->positions[0], motion->channels, fixed.positions);
+        return sthd_render(&fixed, layout, gain, out, capacity);
+    }
+    if (capacity < size_t(f->samples) * layout->channels)
+        return STHD_BUFFER_TOO_SMALL;
+    STHDFrame sample = *f;
+    sample.samples = 1;
+    sample.positions_valid = 1;
+    for (unsigned n = 0; n < f->samples; ++n) {
+        for (unsigned layer = 0; layer < f->presentations; ++layer)
+            std::copy_n(f->pcm[layer] + n * f->channels[layer], f->channels[layer], sample.pcm[layer]);
+        std::copy_n(motion->positions[n], motion->channels, sample.positions);
+        auto status = sthd_render(&sample, layout, gain, out + size_t(n) * layout->channels,
+                                  capacity - size_t(n) * layout->channels);
+        if (status != STHD_OK)
+            return status;
+    }
     return STHD_OK;
 } catch (...) {
     return STHD_OUT_OF_MEMORY;

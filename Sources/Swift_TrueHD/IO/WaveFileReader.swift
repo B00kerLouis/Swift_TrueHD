@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Bounds-checked RIFF/RF64 WAVE parsing and integer PCM conversion. Chunk data
 // is streamed from the source file instead of being loaded as one allocation.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
 name: Native encoder and decoder builds
 on:
   push:
@@ -41,6 +42,20 @@ jobs:
           Build/Products/Release/truehdd -i Build/fixture/synthetic.mlp -o Build/fixture/decoded.pcm --presentation 8 --format s24le
           cmp Build/fixture/decoded.pcm Build/fixture/source.8.pcm
           Build/Portable/truehdd play --help
+      - name: Build independent FFmpeg adapter and run API and FATE tests
+        shell: bash
+        run: |
+          cmake -S . -B Build/FFmpegLibrary -DCMAKE_BUILD_TYPE=Release -DSTHD_NATIVE_DEVICE=OFF -DCMAKE_INSTALL_PREFIX="$PWD/Build/FFmpegInstall"
+          cmake --build Build/FFmpegLibrary --parallel 3
+          cmake --install Build/FFmpegLibrary
+          git init Build/FFmpegSource
+          git -C Build/FFmpegSource remote add origin https://github.com/FFmpeg/FFmpeg.git
+          git -C Build/FFmpegSource fetch --depth 1 origin "$(cat Integrations/FFmpeg/UPSTREAM_REVISION)"
+          git -C Build/FFmpegSource checkout --detach FETCH_HEAD
+          cmake -DFFMPEG_SOURCE="$PWD/Build/FFmpegSource" -P Integrations/FFmpeg/install.cmake
+          export PKG_CONFIG_PATH="$PWD/Build/FFmpegInstall/lib/pkgconfig"
+          (cd Build/FFmpegSource && ./configure --disable-everything --disable-autodetect --disable-doc --enable-ffmpeg --enable-ffprobe --enable-libtruehdd --pkg-config-flags=--static --enable-decoder=libtruehdd --enable-parser=mlp --enable-demuxer=truehd --enable-muxer=pcm_s24le,pcm_s32le,md5,framecrc --enable-encoder=pcm_s24le,pcm_s32le --enable-protocol=file,pipe,md5 --enable-filter=aresample,aformat,anull --enable-swresample && make -j3)
+          sh Integrations/FFmpeg/check.sh "$PWD/Build/FFmpegSource" "$PWD/Build/FFmpegChecks"
       - uses: actions/upload-artifact@v4
         with:
           name: decoder-test-fixture
@@ -56,6 +71,9 @@ jobs:
             Build/Products/Release/truehdd
             Build/Products/Release/libtruehda.framework
             Build/Products/Release/libtruehdd.framework
+            LICENSE
+            LICENSES/
+            THIRD_PARTY_NOTICES.md
           if-no-files-found: error
   windows:
     name: Windows MSVC decoder
@@ -86,6 +104,8 @@ jobs:
             Build/Portable/Release/truehdd.dll
             Build/Portable/Release/truehdd.lib
             Sources/DecoderFramework/include/TrueHDDecoder.h
+            Decoder/LICENSE
+            LICENSES/LGPL-2.1-or-later.txt
           if-no-files-found: error
   linux:
     name: Linux GCC and PipeWire decoder
@@ -119,6 +139,28 @@ jobs:
           cmake --build Build/Sanitized --parallel 3
           ctest --test-dir Build/Sanitized --output-on-failure
           Build/Sanitized/decoder_tests --stream Build/fixture/synthetic.mlp Build/fixture/source
+      - name: Build independent FFmpeg adapter and run API and FATE tests
+        run: |
+          cmake -S . -B Build/FFmpegLibrary -DCMAKE_BUILD_TYPE=Release -DSTHD_NATIVE_DEVICE=OFF -DCMAKE_INSTALL_PREFIX="$PWD/Build/FFmpegInstall"
+          cmake --build Build/FFmpegLibrary --parallel 3
+          cmake --install Build/FFmpegLibrary
+          git init Build/FFmpegSource
+          git -C Build/FFmpegSource remote add origin https://github.com/FFmpeg/FFmpeg.git
+          git -C Build/FFmpegSource fetch --depth 1 origin "$(cat Integrations/FFmpeg/UPSTREAM_REVISION)"
+          git -C Build/FFmpegSource checkout --detach FETCH_HEAD
+          cmake -DFFMPEG_SOURCE="$PWD/Build/FFmpegSource" -P Integrations/FFmpeg/install.cmake
+          export PKG_CONFIG_PATH="$PWD/Build/FFmpegInstall/lib/pkgconfig"
+          export LD_LIBRARY_PATH="$PWD/Build/FFmpegInstall/lib"
+          (cd Build/FFmpegSource && ./configure --disable-everything --disable-autodetect --disable-doc --enable-ffmpeg --enable-ffprobe --enable-libtruehdd --pkg-config-flags=--static --enable-decoder=libtruehdd --enable-parser=mlp --enable-demuxer=truehd --enable-muxer=pcm_s24le,pcm_s32le,md5,framecrc --enable-encoder=pcm_s24le,pcm_s32le --enable-protocol=file,pipe,md5 --enable-filter=aresample,aformat,anull --enable-swresample && make -j3)
+          sh Integrations/FFmpeg/check.sh "$PWD/Build/FFmpegSource" "$PWD/Build/FFmpegChecks"
+      - name: Structured decoder fuzz smoke
+        run: |
+          sudo apt-get install -y clang libclang-rt-dev
+          cmake -S . -B Build/Fuzz -DSTHD_NATIVE_DEVICE=OFF -DSTHD_BUILD_FUZZER=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          cmake --build Build/Fuzz --target decoder_fuzz --parallel 3
+          mkdir -p Build/FuzzCorpus
+          for input in Integrations/FFmpeg/fixtures/*.mlp; do dd if="$input" of="Build/FuzzCorpus/$(basename "$input")" bs=8190 count=1 status=none; done
+          Build/Fuzz/decoder_fuzz Build/FuzzCorpus -max_total_time=20 -max_len=8190 -timeout=5 -seed=20261006
       - uses: actions/upload-artifact@v4
         with:
           name: linux-decoder-products
@@ -126,4 +168,6 @@ jobs:
             Build/Portable/truehdd
             Build/Portable/libtruehdd.so*
             Sources/DecoderFramework/include/TrueHDDecoder.h
+            Decoder/LICENSE
+            LICENSES/LGPL-2.1-or-later.txt
           if-no-files-found: error

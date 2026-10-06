@@ -1,5 +1,8 @@
 # Project context
 
+Use `B00kerLouis` as the project's first-party author and new Git author/committer.
+Do not add AI co-author trailers. Preserve required third-party license notices.
+
 This project has a macOS Swift 6 TrueHD encoder and a separate portable C/C++17 decoder. Keep the original encoder sources and existing user changes intact when working on the decoder. Decoder implementation must contain only C/C++; do not add Swift, Objective-C, Objective-C++, Python, a codec subprocess, or a dependency on the encoder to either decoder target.
 
 ## Architecture and platforms
@@ -42,10 +45,16 @@ Reference suffixes `.2.pcm`, `.6.pcm`, `.8.pcm`, `.elements.pcm` are optional pa
 
 ## Limits and evidence
 
-Supported syntax is the current encoder's 48 kHz FBA profile, FIR/Huffman, independent 2/6/8 and 12/14/16-element matrices, and fixed-basis OAMD. Unsupported syntax must fail explicitly. DRC codes are exposed but not applied. Native playback is separate from the decoder core: CoreAudio, WASAPI/Windows Spatial Audio, and PipeWire drivers consume a bounded SPSC queue. Ordinary Windows channel PCM uses WASAPI; immersive feeds prefer Spatial Audio objects, with explicit PCM fallback. OS engines handle sample-rate conversion; public decoded PCM remains 48 kHz.
+Supported syntax is 48 kHz FBA with cumulative 2/6/8 and 12/14/16-element matrices, covering the current Encoder and tested DME 6.5.4 streams. Decoder 1.4 supports primitive noise columns, extended Q18 coefficient shifts/deltas/interpolation, dither/bypass, parameter guards, quantization and FIR/IIR state. OAMD supports the admitted one-block dynamic-element/LFE profile and explicit/indexed ramps; missing ramp origins remain unavailable until determined. See Decoder/MATRIX_COMPATIBILITY.md for scope and evidence. Unsupported syntax must fail explicitly. DRC codes are exposed but not applied. Native playback is separate from the decoder core: CoreAudio, WASAPI/Windows Spatial Audio, and PipeWire drivers consume a bounded SPSC queue. Ordinary Windows channel PCM uses WASAPI; immersive feeds prefer Spatial Audio objects, with explicit PCM fallback. OS engines handle sample-rate conversion; public decoded PCM remains 48 kHz.
 
 The encoder performs spatial reduction before compression. Round-trip losslessness refers to encoded element PCM, not original IAB source tracks. The room-coordinate equal-power renderer is not validated as bit-identical to Dolby's renderer. Front-wide outputs may be silent because the current fixed basis has no front-wide anchors. CoreAudio silent playback is verified locally. The GitHub workflow builds encoder/decoder on macOS, decoder on Windows/MSVC and Linux/GCC, compares real encoder fixture PCM, and exercises labelled PipeWire virtual sinks. Physical Windows speaker/Spatial Sound rendering still requires a Windows device. See `Decoder/README.md`, `Decoder/BITSTREAM.md`, and `Decoder/VALIDATION.md` for detailed records.
 
 See `Decoder/AUDIO_ARCHITECTURE.md` for C ABI v3 presentation/object views, routing, normalized room coordinate conversion, explicit downmix, queue lifetimes and native error behavior. Preserve unrelated pre-existing encoder edits when staging Git changes.
 
 Real-time encoded input is owned by `Sources/DecoderFramework/Player.cpp`: one bounded AU buffer, one pending decoded frame and the existing native FIFO. Respect consumed byte counts on timeout and retain pending frames for retry. `sthd_player_cancel` and `sthd_audio_cancel` signal atomic cancellation; destruction and other producer calls are serialized. Update `Decoder/PLAY_API.md` with any lifecycle/ABI changes.
+
+Decoder 1.4.1 tracks explicit termination independently of sample shortening.
+`sthd_decoder_end_of_stream` / `sthd_player_end_of_stream` recognize zero-trim
+and repeated-word termination while preserving 40 valid PCM samples. Reset
+clears decoder EOS; ordinary host EOF remains separate. Preserve the existing
+pending-frame retry and consumed-byte contracts when handling EOS.

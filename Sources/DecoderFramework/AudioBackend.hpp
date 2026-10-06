@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LGPL-2.1-or-later
 #pragma once
 #include "include/TrueHDDecoder.h"
 #include <algorithm>
@@ -82,27 +82,35 @@ struct Ring {
     std::atomic<uint64_t> read{0}, write{0}, underruns{0};
     std::atomic<bool> stopping{false}, draining{false}, started{false};
     std::atomic<STHDStatus> failure{STHD_OK};
-    std::array<STHDPosition, 16> positions{};
-    std::atomic<bool> positions_ready{false};
-    explicit Ring(unsigned c) : channels(c), data(capacity * c) {}
+    std::vector<STHDPosition> position_data;
+    explicit Ring(unsigned c, bool positional = false)
+        : channels(c), data(capacity * c), position_data(positional ? capacity * c : 0) {}
     size_t available() const {
         return size_t(write.load(std::memory_order_acquire) - read.load(std::memory_order_acquire));
     }
-    bool push(const float *pcm, unsigned frames) {
+    bool push(const float *pcm, unsigned frames, const STHDFrameMotion *motion = nullptr,
+              const STHDPosition *positions = nullptr) {
         uint64_t w = write.load(std::memory_order_relaxed),
                  r = read.load(std::memory_order_acquire);
         if (w - r + frames > capacity)
             return false;
-        for (unsigned i = 0; i < frames; ++i)
+        for (unsigned i = 0; i < frames; ++i) {
             std::copy_n(pcm + size_t(i) * channels, channels,
                         data.data() + size_t((w + i) % capacity) * channels);
+            if (!position_data.empty())
+                std::copy_n(motion ? motion->positions[i] : positions, channels,
+                            position_data.data() + size_t((w + i) % capacity) * channels);
+        }
         write.store(w + frames, std::memory_order_release);
         return true;
     }
-    unsigned pop(float *pcm, unsigned frames) {
+    unsigned pop(float *pcm, unsigned frames, STHDPosition *first_positions = nullptr) {
         uint64_t r = read.load(std::memory_order_relaxed),
                  w = write.load(std::memory_order_acquire);
         unsigned n = unsigned(std::min<uint64_t>(w - r, frames));
+        if (n && first_positions && !position_data.empty())
+            std::copy_n(position_data.data() + size_t(r % capacity) * channels, channels,
+                        first_positions);
         for (unsigned i = 0; i < n; ++i)
             std::copy_n(data.data() + size_t((r + i) % capacity) * channels, channels,
                         pcm + size_t(i) * channels);

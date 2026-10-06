@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Parses the intentionally small public command surface and maps it onto the
 // shared framework configuration. Compliance choices remain inside the library.

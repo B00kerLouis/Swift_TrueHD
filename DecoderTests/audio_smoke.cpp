@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LGPL-2.1-or-later
 #include "TrueHDDecoder.h"
 #include <iostream>
 #include <memory>

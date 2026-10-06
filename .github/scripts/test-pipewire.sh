@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # Native API integration test: isolated server and a labelled virtual sink.
 set -euo pipefail
 smoke_binary="$1"

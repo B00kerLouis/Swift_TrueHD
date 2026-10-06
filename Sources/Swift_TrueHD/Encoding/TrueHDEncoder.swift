@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Public asynchronous facade that validates configuration, selects the native
 // input path, and dispatches to the matching elementary-stream encoder.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Checksum and parity primitives used while assembling access units and
 // protected metadata sections. All arithmetic is intentionally width-bounded.

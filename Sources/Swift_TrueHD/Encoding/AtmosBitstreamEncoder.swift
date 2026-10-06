@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Parallel immersive access-unit encoder. Restart intervals are optimized
 // independently and committed in source order for deterministic output.

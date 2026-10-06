@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: truehdd
+Description: Independent TrueHD decoder with a portable C ABI
+Version: @PROJECT_VERSION@
+Libs: -L"${libdir}" -ltruehdd
+Libs.private: @STHD_PC_PRIVATE_LIBS@
+Cflags: -I"${includedir}"@STHD_PC_CFLAGS@

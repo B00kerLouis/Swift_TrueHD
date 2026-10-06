@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LGPL-2.1-or-later
 #include "BitReader.hpp"
 #include <array>
 #include <vector>
@@ -49,7 +49,7 @@ uint8_t restart_checksum(const uint8_t *p, size_t bits) {
     }
     return uint8_t(v);
 }
-// Self-contained SHA-256 for the encoder's EMDF HMAC. No platform crypto ABI.
+// SHA-256 calculation for EMDF HMAC authentication.
 static uint32_t rotr(uint32_t x, unsigned n) { return (x >> n) | (x << (32 - n)); }
 static std::array<uint8_t, 32> sha256(const std::vector<uint8_t> &input) {
     static constexpr uint32_t k[64] = {

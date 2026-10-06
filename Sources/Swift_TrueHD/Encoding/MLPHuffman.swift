@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Exact-cost selection for raw residuals and the three fixed VLC codebooks,
 // including stateful offset inheritance and signalling overhead.

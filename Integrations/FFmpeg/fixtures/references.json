@@ -1,0 +1,142 @@
+{
+  "sample_ownership": "B00kerLouis; original synthetic audio, LGPL-2.1-or-later decoder tests",
+  "reference_origin": "Swift Encoder pre-entropy PCM; not Decoder-generated",
+  "streams": [
+    {
+      "file": "synthetic-71.mlp",
+      "bytes": 77582,
+      "sha256": "c8a8fef6712483f79b00760a17dc6183d9c8ab991daa62c2e976a84ddbf76e16",
+      "samples": 5137,
+      "reference_pcm": {
+        "2": {
+          "md5": "94076c3f5f26dc9ba0270458e91121f9",
+          "sha256": "10e048d2ef12290e3a905be6f242809f7f1dc41a0890943b9acf305326feff65",
+          "bytes": 30822
+        },
+        "6": {
+          "md5": "fa6126b122b83359b4c423c9ab974111",
+          "sha256": "823491c907c7e60024974e50a63d9804e998e44553792cbc214f021e8799a8fc",
+          "bytes": 92466
+        },
+        "8": {
+          "md5": "bfabbb04f206c73b3df14790d638865f",
+          "sha256": "1059defb9b3a5d7086ce1980429198a5aa3d878d0162465610c654a8c7b15cef",
+          "bytes": 123288
+        }
+      }
+    },
+    {
+      "file": "synthetic-12.mlp",
+      "bytes": 62054,
+      "sha256": "978ce55ed134fc49d7f0dac16ec7285bd5ca8847e03cca23ec94632489aee8db",
+      "samples": 6417,
+      "reference_pcm": {
+        "2": {
+          "md5": "c3af7a4077e6c31b801f305f049ac013",
+          "sha256": "2ad0a43282914393f98701aecac046ad67a50a9aa78ff6bcc5f2f7ba24ca7fd7",
+          "bytes": 38502
+        },
+        "6": {
+          "md5": "634339d1133a91068e7556011b2c2fbe",
+          "sha256": "bcc9a8ecc4e2e1d0b3a59c6a3eb0f56431e64f4fe89450c529f28fdf18d81e23",
+          "bytes": 115506
+        },
+        "8": {
+          "md5": "0268a2c72b6ed487a7386279e89beee4",
+          "sha256": "0dbb876f413ea65ec2f2bafa2db9ea106ec471f90d7db2c4e90824ab8d61813f",
+          "bytes": 154008
+        },
+        "elements": {
+          "md5": "8fc84e56f97907d3ec6f9f7211092c2a",
+          "sha256": "7762f8d4e8c1759a6d3f711265aed019d38368bca360d5d7b43affa38bb38dbb",
+          "bytes": 231012
+        }
+      }
+    },
+    {
+      "file": "synthetic-14.mlp",
+      "bytes": 73054,
+      "sha256": "c5b267bb341a20121a497b2dc12906c807a6830005a2277390b8505184752874",
+      "samples": 6417,
+      "reference_pcm": {
+        "2": {
+          "md5": "2b8652334fdf9787aa9fce06ef431b10",
+          "sha256": "2fce9a1d8bd348c6963901c257fd9ed75b7c5c3cb6086a1360892bd70fa005bb",
+          "bytes": 38502
+        },
+        "6": {
+          "md5": "86d8cdb456a3555061e5a8ae470cee2d",
+          "sha256": "af26f39dac3e9cbce50875b071063c0c6a407cf0494646a101665d3c16d67dd3",
+          "bytes": 115506
+        },
+        "8": {
+          "md5": "4639477f2853f8602d15b4c07ccf9ada",
+          "sha256": "d1418965376a5209f5f657f1f2175cba3418aadb003643a68b753ea0fc459d71",
+          "bytes": 154008
+        },
+        "elements": {
+          "md5": "128e3a63ffb507758e886199cfce2a4c",
+          "sha256": "00f73d430a7fa005ac1d31b2d3959d2ec0b01909279e260343e65712c42f12f9",
+          "bytes": 269514
+        }
+      }
+    },
+    {
+      "file": "synthetic-16.mlp",
+      "bytes": 83268,
+      "sha256": "8967f8732d7b5d24dd177aac5e981be4edef522358686d4785e73b0075bc976b",
+      "samples": 6417,
+      "reference_pcm": {
+        "2": {
+          "md5": "1a6b8737e86f3e165d56af54f990112d",
+          "sha256": "054596631a2cf44e48b9ba81bb27e56d880ed3b7a449ea541ce599171c3e51d0",
+          "bytes": 38502
+        },
+        "6": {
+          "md5": "bf887163ae473f70b2c88e3b29710430",
+          "sha256": "84df93dac60beaee3ffb332154a15fc1626581c092ba0cab246ec639415b83ed",
+          "bytes": 115506
+        },
+        "8": {
+          "md5": "f35c213b732e26e564fcd079a0c233b0",
+          "sha256": "8ec6be4083dc43b3122313e6b2323005e6b0a6c6371c41ec45a4376a4866266e",
+          "bytes": 154008
+        },
+        "elements": {
+          "md5": "63cc096e3fa58b0e29f04d9acd017bcc",
+          "sha256": "2b628af0d99d7586e9fe7a02fc7f1efd7b72ca9024c50e65aad7978cb5d7fb97",
+          "bytes": 308016
+        }
+      }
+    },
+    {
+      "file": "timed-16.mlp",
+      "bytes": 83508,
+      "sha256": "b52fcad6e5b0d818daa89da7d4a0b049e185de7e8428875bea261fa1ee4a51de",
+      "samples": 6417,
+      "reference_pcm": {
+        "2": {
+          "md5": "1a6b8737e86f3e165d56af54f990112d",
+          "sha256": "054596631a2cf44e48b9ba81bb27e56d880ed3b7a449ea541ce599171c3e51d0",
+          "bytes": 38502
+        },
+        "6": {
+          "md5": "bf887163ae473f70b2c88e3b29710430",
+          "sha256": "84df93dac60beaee3ffb332154a15fc1626581c092ba0cab246ec639415b83ed",
+          "bytes": 115506
+        },
+        "8": {
+          "md5": "f35c213b732e26e564fcd079a0c233b0",
+          "sha256": "8ec6be4083dc43b3122313e6b2323005e6b0a6c6371c41ec45a4376a4866266e",
+          "bytes": 154008
+        },
+        "elements": {
+          "md5": "63cc096e3fa58b0e29f04d9acd017bcc",
+          "sha256": "2b628af0d99d7586e9fe7a02fc7f1efd7b72ca9024c50e65aad7978cb5d7fb97",
+          "bytes": 308016
+        }
+      },
+      "metadata_origin": "Encoder-authenticated timed OAMD; audio substreams identical to synthetic-16.mlp"
+    }
+  ]
+}

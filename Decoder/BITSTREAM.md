@@ -1,6 +1,6 @@
-# Encoder 输出分析与 decoder 实现
+# 码流分析与 decoder 实现
 
-所有下列结构已通过当前源码和给定素材的全片输出验证。decoder 的支持范围以当前项目的输出 profile 为边界；不会将尚未实现的其他 TrueHD 语法解释成此 profile。
+当前项目输出与 DME 6.5.4 的已验证 48 kHz FBA 语法均有完整文件证据。下文编码流程描述本项目 Encoder；官方码流差异和 Decoder 边界见 MATRIX_COMPATIBILITY.md。未实现的其他语法仍明确拒绝。
 
 ## 编码流程
 
@@ -24,7 +24,7 @@
 | directory 之后 | 变长 | 累积音频子流，均有 parity 与 checksum8 |
 | 最后音频子流之后 | 可选变长 | 受保护 Evolution/OAMD wrapper |
 
-AU 总长度最多 8190 byte，48 kHz 下通常代表 40 个采样，最后一帧可裁剪。DRC extra word 的高 9 bit 为有符号 gain code，低 7 bit 为插值时间 code 7 与保留位。decoder 返回 gain code，保持默认无 DRC 的 PCM。
+AU 总长度最多 8190 byte，48 kHz 下通常代表 40 个采样，最后一帧可裁剪。DRC extra word 的高 9 bit 为有符号 gain code，其后 3 bit 为插值时间 code（0..7），最后 4 bit 为保留位。decoder 返回 gain code，保持默认无 DRC 的 PCM。
 
 ## 子流与预测
 
@@ -33,22 +33,24 @@ AU 总长度最多 8190 byte，48 kHz 下通常代表 40 个采样，最后一�
 Huffman 的还原为：
 
 ```text
+lsb_bits = huff_lsbs - quantizer_step
 signed_offset = inherited_offset
 if codebook != 0: signed_offset -= 7 * 2^lsb_bits
 sign_shift = lsb_bits + (codebook != 0 ? 2 - codebook : -1)
 if sign_shift >= 0: signed_offset -= 2^sign_shift
-residual = signed_offset + vlc_table_index * 2^lsb_bits + low_bits
-prediction = floor(sum(coeff[i] * decoded_history[i]) / 2^filter_shift)
-sample = wrap32(residual + prediction)
+residual = wrap32((signed_offset + vlc_table_index * 2^lsb_bits + low_bits) * 2^quantizer_step)
+prediction = floor((FIR_dot + IIR_dot) / 2^filter_shift)
+sample = quantized(wrap32(residual + prediction))
+IIR_history = wrap32(sample - prediction)
 ```
 
 系数、history 和加法的宽度、负数 floor 和 wrap32 均显式处理，不依赖 C++ 对负数移位或超范围有符号窄化的实现行为。原始 transport 在各层之间保留；矩阵计算在独立副本上逐行进行，然后执行 output shift，输出 24-bit PCM，按 `ch_assign` 排列。FBA 7.1 的 speaker IDs 是 side-before-back，WAVE mask 顺序是 back-before-side，必须转换。
 
-Atmos canonical `ch_assign` 为 `[2,10,7,8,3,0,4,5,9,11,12,13,14,15,6,1]`，12/14 元素使用小于元素总数的子集。OAMD 已经按该 permutation 的解码输出顺序排列，因此 renderer 使用实际解码出的 `positions[output_index]`，不能硬编码“第 8 个就是某个高度扬声器”。
+本项目 Encoder 选择的 Atmos `ch_assign` 为 `[2,10,7,8,3,0,4,5,9,11,12,13,14,15,6,1]`，12/14 元素使用小于元素总数的子集；DME 使用自己的 permutation，Decoder 按字段读取而不硬编码此表。OAMD 已经按该 permutation 的解码输出顺序排列，因此 renderer 使用实际解码出的 `positions[output_index]`，不能硬编码“第 8 个就是某个高度扬声器”。
 
 ## 校验与有界解析
 
-decoder 校验 AU 长度和 header parity、directory 范围、major-sync CRC、每层 restart CRC、每层 parity/checksum8、先前 restart interval 的 PCM checksum、四层一致的末帧裁剪、Evolution wrapper 长度/parity、OAMD 元素长度和语法，以及 EMDF primary HMAC-SHA256。最终不完整 interval 没有下一次 restart PCM checksum；它仍有子流 CRC/parity 和有界解析。
+decoder 校验 AU 长度和 header parity、directory 范围、major-sync CRC、每层 restart CRC、每层 parity/checksum8、先前 restart interval 的 PCM checksum（默认报告，严格模式拒绝）、四层一致的末帧裁剪、Evolution wrapper 长度/parity、OAMD 元素长度和语法，以及 EMDF primary HMAC-SHA256。最终不完整 interval 没有下一次 restart PCM checksum；它仍有子流 CRC/parity 和有界解析。
 
 任何失败都不提交解码状态。状态为固定数组；元数据与 HMAC 的临时存储上限由一个 AU 限定。开始解码必须有 major sync；显式 reset 表示切换流，未提供 seek/resync 扫描器。
 
@@ -76,10 +78,35 @@ Atmos 的 2.0/5.1/7.1 使用码流的相应兼容呈现；plain 7.1 的 stereo/5
 |---|---|
 | A：FFmpeg 子进程 | 引入运行时 executable，缺少第四层空间元素解码，不满足独立 decoder 要求 |
 | B：嵌入通用 libavcodec | 可复用成熟兼容呈现，但仍不能覆盖本项目 FBA 第四层矩阵/OAMD，依赖范围大 |
-| C：完整通用 TrueHD/MLP decoder | 范围包含多采样率、IIR、noise、其他 OAMD；超出该项目当前 profile，验证证据不足 |
+| C：完整通用 TrueHD/MLP decoder | 范围包含多采样率、FBB、其他核心拓扑及其他 OAMD；仍超出已验证 profile |
 | D：连接既有 Swift encoder/Apple decoder API | 违反 decoder 的纯 C/C++ 与跨平台边界，Apple API 也不提供所需完整元素访问 |
 | E：从当前 encoder 反向实现独立 C++ 核心、C ABI 与 renderer | 有全部语法和可生成 PCM oracle；有界 I/O、Xcode/CMake 独立构建，选择此方案 |
 
 渲染另比较了固定通道复制、补零、通道数猜测、方向向量 VBAP 与房间坐标等功率网格。选择最后一项以匹配此 encoder 的 Cartesian basis；显式按标签路由和能量守恒，保留源锚点位置。没有冒称通用 Dolby renderer 的等价实现。
 
-主要依据是本地 Swift encoder 和实际输出；固定 MLP 字段及基础算法另与 [FFmpeg 官方实现](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mlpdec.c) 核对。扬声器命名参考 [Dolby 布局指南](https://www.dolby.com/siteassets/technologies/dolby-atmos/atmos-installation-guidelines-121318_r3.1.pdf)，ALSA 标签核对 [ALSA 官方源码](https://github.com/alsa-project/alsa-lib/blob/master/include/pcm.h)。没有将第三方 codec 源码导入 decoder。
+主要依据是本地 Swift encoder 和实际输出；固定 MLP 字段及基础算法另与 [FFmpeg 官方实现](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mlpdec.c) 核对。扬声器命名参考 [Dolby 布局指南](https://www.dolby.com/siteassets/technologies/dolby-atmos/atmos-installation-guidelines-121318_r3.1.pdf)，ALSA 标签核对 [ALSA 官方源码](https://github.com/alsa-project/alsa-lib/blob/master/include/pcm.h)。Decoder 1.4 使用的 dither 常量表已单独归属 FFmpeg，见 THIRD_PARTY_NOTICES.md；没有第三方 codec 运行时依赖。
+
+### Timed OAMD
+
+单 metadata block 的 sample offset mode 为 0（零）、1（8/16/18/24）、2（5-bit）；
+block offset factor 为 6-bit × 32 samples。Ramp code 0/1/2 表示 0/512/1536 samples，
+code 3 的当前语法提供 11-bit duration。坐标目标从指定采样开始线性渐变，允许跨 AU，
+新事件从该采样的当前坐标接续。位置和 PCM 分别恢复；移动不改变熵解码或逆矩阵。
+
+## Decoder 1.4 matrix extensions
+
+Primitive 31EA includes two noise-source columns; 31EB has row dither.
+Extended 31EC carries biased coefficient shifts, bypass widths and delta
+configuration/value updates. The Decoder normalizes to Q18 and preserves
+independent matrix/delta lifetimes, including inactive row state. Parameter
+guards, quantizer steps, FIR/IIR state and indexed OAMD ramps are admitted.
+See [MATRIX_COMPATIBILITY.md](MATRIX_COMPATIBILITY.md) for measured fields,
+scalar semantics and validation scope. The dither lookup constants carry the
+FFmpeg attribution in [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md).
+
+### Explicit termination without shortening
+
+`D234 E000` is a valid terminator with zero samples to remove. `D234 D234`
+is the repeated-word termination form. Decoder 1.4.1 records EOS independently
+of trim and preserves all 40 samples for these cases, while still rejecting
+malformed suffixes and data following validated termination.

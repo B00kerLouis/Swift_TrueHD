@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Minimal most-significant-bit-first writer for deterministic syntax packing.
 // Callers retain responsibility for field ranges and byte-alignment rules.

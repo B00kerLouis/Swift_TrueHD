@@ -1,9 +1,10 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LGPL-2.1-or-later
 #include "../Sources/DecoderFramework/AudioBackend.hpp"
 #if defined(STHD_TEST_COREAUDIO_MAPS)
 #include <AudioToolbox/AudioToolbox.h>
 #endif
 #include "TrueHDDecoder.h"
+#include "../Sources/DecoderFramework/BitReader.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -16,6 +17,7 @@
 #include <string>
 #include <vector>
 extern "C" int sthd_c_header_test(void);
+void sthd_matrix_syntax_tests(const char *fixture);
 namespace {
 void expect(bool b, const std::string &s) {
     if (!b)
@@ -203,6 +205,83 @@ void corrupt_tests(const std::filesystem::path &path) {
     }
     sthd_decoder_destroy(d);
 }
+// Independent bit-serial MLP CRC calculation for integrity-preserving header
+// mutations. Random bytes with broken CRCs do not exercise profile parsing.
+uint16_t header_crc(const uint8_t *p, size_t count) {
+    uint16_t crc = 0;
+    for (size_t i = 0; i + 2 < count; ++i) {
+        crc ^= uint16_t(unsigned(p[i]) << 8);
+        for (unsigned bit = 0; bit < 8; ++bit)
+            crc = uint16_t((unsigned(crc) << 1) ^ ((crc & 0x8000) ? 0x2d : 0));
+    }
+    return uint16_t((crc >> 8) | (unsigned(crc) << 8)) ^
+           uint16_t(p[count - 2] | (unsigned(p[count - 1]) << 8));
+}
+void seal_major(std::vector<uint8_t> &au, size_t sync_size) {
+    uint16_t crc = header_crc(au.data() + 4, sync_size - 2);
+    au[4 + sync_size - 2] = uint8_t(crc);
+    au[4 + sync_size - 1] = uint8_t(crc >> 8);
+    unsigned parity = unsigned(au.size() / 2) ^
+                      ((unsigned(au[2]) << 8) | au[3]);
+    size_t at = 4 + sync_size;
+    for (unsigned i = 0; i < (au[20] >> 4); ++i) {
+        unsigned word = (unsigned(au[at]) << 8) | au[at + 1];
+        parity ^= au[at] ^ au[at + 1];
+        at += 2;
+        if (word & 0x8000) {
+            parity ^= au[at] ^ au[at + 1];
+            at += 2;
+        }
+    }
+    parity ^= parity >> 8;
+    parity ^= parity >> 4;
+    unsigned header = ((parity ^ 15) & 15) << 12 | unsigned(au.size() / 2);
+    au[0] = uint8_t(header >> 8);
+    au[1] = uint8_t(header);
+}
+void major_header_tests(const std::vector<uint8_t> &first) {
+    const size_t original_size = (first[29] & 1) ? 30 + (first[30] >> 4) * 2 : 28;
+    expect(header_crc(first.data() + 4, original_size - 2) ==
+               uint16_t(first[4 + original_size - 2] |
+                        (unsigned(first[4 + original_size - 1]) << 8)),
+           "independent major CRC oracle");
+    std::unique_ptr<STHDDecoder, decltype(&sthd_decoder_destroy)> d(
+        sthd_decoder_create(), sthd_decoder_destroy);
+    STHDFrame frame{};
+    auto rejected = [&](std::vector<uint8_t> au, size_t sync_size, const char *message) {
+        seal_major(au, sync_size);
+        sthd_decoder_reset(d.get());
+        auto saved = frame;
+        expect(sthd_decode_access_unit(d.get(), au.data(), au.size(), &frame) ==
+                   STHD_UNSUPPORTED_STREAM,
+               message);
+        expect(std::memcmp(&frame, &saved, sizeof(frame)) == 0,
+               "unsupported major header leaves output untouched");
+        expect(sthd_decode_access_unit(d.get(), first.data(), first.size(), &frame) == STHD_OK,
+               "unsupported major header leaves initial state untouched");
+    };
+    auto changed = first;
+    changed[9] ^= 0x40; // Stereo channel modifier.
+    rejected(changed, original_size, "valid CRC with unsupported modifier rejected");
+    changed = first;
+    changed[11] ^= 1; // Eight-channel arrangement.
+    rejected(changed, original_size, "valid CRC with unsupported arrangement rejected");
+    changed = first;
+    changed[20] ^= 1; // Extended substream info.
+    rejected(changed, original_size, "valid CRC with unsupported presentation flags rejected");
+    if (original_size == 28) {
+        changed = first;
+        changed.insert(changed.begin() + 30, 2, 0);
+        changed[29] |= 1;
+        changed[30] = 0; // Extension present, zero extension pairs: actual size 30.
+        rejected(changed, 30, "actual 30-byte extension parsed before unsupported rejection");
+    } else {
+        changed = first;
+        changed.insert(changed.begin() + 34, 4, 0);
+        changed[30] = uint8_t((changed[30] & 15) | 0x30);
+        rejected(changed, 36, "actual 36-byte extension parsed before unsupported rejection");
+    }
+}
 void compare(std::ifstream &ref, const int32_t *pcm, size_t count, uint64_t au, unsigned layer) {
     std::vector<uint8_t> b(count * 3);
     ref.read(reinterpret_cast<char *>(b.data()), std::streamsize(b.size()));
@@ -381,6 +460,21 @@ void audio_policy_tests() {
     caps.pcm_channels = 2;
     expect(sthd_audio_plan(&f, &caps, &explicit_layout, 0, &plan) == STHD_UNSUPPORTED_OUTPUT,
            "reject incompatible physical channel count");
+    auto waiting = f;
+    waiting.positions_valid = 0;
+    STHDAudioCapabilities stereo_caps{};
+    stereo_caps.pcm_available = stereo_caps.pcm_layout_valid = 1;
+    stereo_caps.pcm_channels = 2;
+    stereo_caps.pcm_backend = STHD_AUDIO_COREAUDIO;
+    sthd_layout_named("2.0", &stereo_caps.pcm_layout);
+    expect(sthd_audio_plan(&waiting, &stereo_caps, nullptr, 0, &plan) == STHD_OK &&
+               plan.mode == STHD_AUDIO_PCM && plan.layout.channels == 2,
+           "core playback remains available while object coordinates preroll");
+    stereo_caps.spatial_available = 1;
+    stereo_caps.spatial_speaker_mask = 1U << STHD_LFE;
+    stereo_caps.max_dynamic_objects = 15;
+    expect(sthd_audio_plan(&waiting, &stereo_caps, nullptr, 0, &plan) == STHD_UNKNOWN_LAYOUT,
+           "positional output requires known coordinates");
     f.presentations = 3;
     caps.pcm_backend = STHD_AUDIO_WASAPI;
     caps.pcm_layout_valid = 1;
@@ -422,6 +516,10 @@ void audio_policy_tests() {
 }
 void stream_tests(const std::filesystem::path &path, const std::string &prefix) {
     corrupt_tests(path);
+    {
+        std::ifstream header_input(path, std::ios::binary);
+        major_header_tests(read_au(header_input));
+    }
     std::ifstream in(path, std::ios::binary);
     expect(bool(in), "open test stream");
     std::array<std::ifstream, 4> refs;
@@ -438,12 +536,18 @@ void stream_tests(const std::filesystem::path &path, const std::string &prefix) 
         }
     auto *d = sthd_decoder_create();
     expect(d != nullptr, "create decoder");
+    std::unique_ptr<STHDDecoder, decltype(&sthd_decoder_destroy)> seeking(
+        sthd_decoder_create(), sthd_decoder_destroy);
+    expect(bool(seeking), "create random-access decoder");
+    expect(sthd_decoder_set_strict_pcm_checksum(d, 1) == STHD_OK &&
+           sthd_decoder_set_strict_pcm_checksum(seeking.get(), 1) == STHD_OK, "strict stream validation");
+    uint64_t seek_base = 0;
     STHDFrame f{};
     std::array<STHDLayout, 9> layouts{};
     for (unsigned i = 0; i < 9; ++i)
         sthd_layout_named(names[i], &layouts[i]);
     double peaks[9]{};
-    uint64_t clipped[9]{};
+    uint64_t clipped[9]{}, unavailable[9]{};
     double energies[9][16]{};
     uint64_t au = 0, samples = 0;
     while (true) {
@@ -453,13 +557,45 @@ void stream_tests(const std::filesystem::path &path, const std::string &prefix) 
         auto s = sthd_decode_access_unit(d, bytes.data(), bytes.size(), &f);
         expect(s == STHD_OK, "decode AU " + std::to_string(au) + ": " + sthd_decoder_error(d));
         expect(f.first_sample == samples, "continuous sample timeline");
+        if (bytes.size() >= 8 && bytes[4] == 0xf8 && bytes[5] == 0x72 &&
+            bytes[6] == 0x6f && bytes[7] == 0xba) {
+            sthd_decoder_reset(seeking.get());
+            seek_base = samples;
+        }
+        STHDFrame seek_frame{};
+        expect(sthd_decode_access_unit(seeking.get(), bytes.data(), bytes.size(), &seek_frame) ==
+                   STHD_OK,
+               "decode after major-sync random access");
+        expect(seek_frame.first_sample == samples - seek_base, "reset sample timeline");
+        expect(seek_frame.sample_rate == f.sample_rate && seek_frame.samples == f.samples &&
+                   seek_frame.presentations == f.presentations &&
+                   seek_frame.element_channels == f.element_channels &&
+                   std::memcmp(f.channels, seek_frame.channels, sizeof(f.channels)) == 0 &&
+                   std::memcmp(f.pcm, seek_frame.pcm, sizeof(f.pcm)) == 0,
+               "random-access PCM equals continuous decode at AU " + std::to_string(au));
+        const uint32_t known_drc = sthd_decoder_drc_valid(seeking.get());
+        for (unsigned i = 0; i < f.presentations; ++i)
+            if (known_drc & (1U << i))
+                expect(f.drc_gain_code[i] == seek_frame.drc_gain_code[i],
+                       "available random-access DRC equals continuous decode");
+        if (seek_frame.positions_valid)
+            expect(f.positions_valid &&
+                       std::memcmp(f.positions, seek_frame.positions, sizeof(f.positions)) == 0,
+                   "available random-access OAMD equals continuous decode at AU " + std::to_string(au));
         for (unsigned i = 0; i < f.presentations; ++i)
             if (compared & (1U << i))
                 compare(refs[i], f.pcm[i], size_t(f.samples) * f.channels[i], au, i);
         for (unsigned i = 0; i < 9; ++i) {
             std::array<float, 640> out{};
-            expect(sthd_render(&f, &layouts[i], 1, out.data(), out.size()) == STHD_OK,
-                   "stream render");
+            STHDFrameMotion motion{};
+            expect(sthd_decoder_motion(d, &motion) == STHD_OK, "stream motion query");
+            const auto rendered = sthd_render_motion(&f, &motion, &layouts[i], 1, out.data(), out.size());
+            if (rendered == STHD_UNKNOWN_LAYOUT && i >= 3 &&
+                motion.valid_samples != ((uint64_t(1) << f.samples) - 1)) {
+                unavailable[i] += f.samples;
+                continue;
+            }
+            expect(rendered == STHD_OK, "stream render at AU " + std::to_string(au) + " layout " + names[i]);
             for (unsigned n = 0; n < f.samples; ++n)
                 for (unsigned c = 0; c < layouts[i].channels; ++c) {
                     double v = out[n * layouts[i].channels + c];
@@ -483,9 +619,10 @@ void stream_tests(const std::filesystem::path &path, const std::string &prefix) 
               << ",\"referencePresentations\":" << compared << ",\"layouts\":[\n";
     for (unsigned i = 0; i < 9; ++i) {
         std::cout << "{\"name\":\"" << names[i] << "\",\"channels\":" << layouts[i].channels
-                  << ",\"peak\":" << peaks[i] << ",\"clipped\":" << clipped[i] << ",\"rms\":[";
+                  << ",\"peak\":" << peaks[i] << ",\"clipped\":" << clipped[i]
+                  << ",\"unavailableSamples\":" << unavailable[i] << ",\"rms\":[";
         for (unsigned c = 0; c < layouts[i].channels; ++c)
-            std::cout << (c ? "," : "") << std::sqrt(energies[i][c] / double(samples));
+            std::cout << (c ? "," : "") << std::sqrt(energies[i][c] / double(std::max<uint64_t>(1, samples - unavailable[i])));
         std::cout << "]}" << (i == 8 ? "" : ",") << "\n";
     }
     std::cout << "]}\n";
@@ -529,6 +666,149 @@ void generate(const std::filesystem::path &path, const std::string &prefix = "")
                     reference.put(char(uint32_t(v) >> (i * 8)));
         }
 }
+void checksum_tests(const std::filesystem::path &path) {
+    std::ifstream input(path, std::ios::binary);
+    auto *relaxed = sthd_decoder_create(), *strict = sthd_decoder_create();
+    expect(relaxed && strict, "checksum decoders");
+    expect(sthd_decoder_set_strict_pcm_checksum(strict, 1) == STHD_OK, "enable strict checks");
+    STHDFrame a{}, b{};
+    std::vector<uint8_t> au;
+    for (unsigned n = 0; n < 128; ++n) {
+        au = read_au(input);
+        expect(sthd_decode_access_unit(relaxed, au.data(), au.size(), &a) == STHD_OK &&
+               sthd_decode_access_unit(strict, au.data(), au.size(), &b) == STHD_OK,
+               "valid interval before forged checksum");
+    }
+    au = read_au(input);
+    auto damaged = au;
+    const size_t directory = 4 + 28;
+    size_t payload = directory;
+    for (unsigned layer = 0; layer < 3; ++layer) {
+        unsigned word = (unsigned(damaged[payload]) << 8) | damaged[payload + 1];
+        payload += (word & 0x8000) ? 4 : 2;
+    }
+    size_t length = (((unsigned(damaged[directory]) << 8) | damaged[directory + 1]) & 0xfff) * 2;
+    auto *sub = damaged.data() + payload;
+    auto write_bits = [&](unsigned bit, unsigned count, unsigned value) {
+        for (unsigned i = 0; i < count; ++i) {
+            unsigned at = bit + i, mask = 1U << (7 - (at & 7));
+            sub[at / 8] = uint8_t((sub[at / 8] & ~mask) |
+                                  (((value >> (count - i - 1)) & 1) ? mask : 0));
+        }
+    };
+    sub[91 / 8] ^= uint8_t(1U << (7 - (91 & 7)));
+    write_bits(127, 8, sthd::restart_checksum(sub, 125));
+    uint8_t parity = 0;
+    for (size_t i = 0; i < length - 2; ++i) parity ^= sub[i];
+    sub[length - 2] = parity ^ 0xa9;
+    sub[length - 1] = sthd::checksum8(sub, length - 2);
+    auto saved = b;
+    expect(sthd_decode_access_unit(strict, damaged.data(), damaged.size(), &b) == STHD_CORRUPT_STREAM &&
+           !std::memcmp(&saved, &b, sizeof(b)), "strict rejection preserves PCM/state");
+    STHDPCMChecksum check{};
+    expect(sthd_decoder_pcm_checksum(strict, &check) == STHD_OK && check.total_mismatches == 0,
+           "strict rejection preserves checksum counters");
+    expect(sthd_decode_access_unit(relaxed, damaged.data(), damaged.size(), &a) == STHD_OK,
+           "reported PCM mismatch permits playback");
+    expect(sthd_decoder_pcm_checksum(relaxed, &check) == STHD_OK &&
+           check.checked_layers == 7 && check.mismatched_layers == 1 && check.total_mismatches == 1 &&
+           check.expected[0] != check.actual[0], "copied mismatch evidence");
+    expect(sthd_decode_access_unit(strict, au.data(), au.size(), &b) == STHD_OK &&
+           !std::memcmp(&a, &b, sizeof(a)), "PCM is unchanged by checksum policy");
+    sthd_decoder_reset(relaxed);
+    expect(sthd_decoder_pcm_checksum(relaxed, &check) == STHD_OK && check.total_mismatches == 0,
+           "reset clears checksum evidence");
+    expect(sthd_decoder_set_strict_pcm_checksum(strict, 2) == STHD_INVALID_ARGUMENT,
+           "invalid strict policy");
+    sthd_decoder_destroy(relaxed); sthd_decoder_destroy(strict);
+    std::cout << "PCM checksum report/strict policies and transactional retry: passed\n";
+}
+void motion_tests(const std::filesystem::path &path) {
+    std::ifstream input(path, std::ios::binary);
+    std::unique_ptr<STHDDecoder, decltype(&sthd_decoder_destroy)> decoder(
+        sthd_decoder_create(), sthd_decoder_destroy);
+    expect(bool(input) && bool(decoder), "open timed metadata fixture");
+    struct Event { uint64_t sample; unsigned duration; STHDPosition target; };
+    const Event events[] = {{0,0,{-1,1,0}}, {58,0,{1,1,0}}, {87,64,{-1,1,1}},
+                            {193,512,{1,1,0}}, {273,1536,{-1,-1,0}},
+                            {384,73,{1,-1,1}}, {480,0,{-1,1,0}}, {5160,0,{-1,1,0}}};
+    unsigned event = 0, duration = 0;
+    uint64_t begin = 0, samples = 0;
+    STHDPosition from{-1,1,0}, target=from;
+    auto evaluate = [&](uint64_t time) {
+        double t = duration ? std::min(1.0, double(time-begin)/duration) : 1.0;
+        return STHDPosition{float(from.x+(double(target.x)-from.x)*t),
+                            float(from.y+(double(target.y)-from.y)*t),
+                            float(from.z+(double(target.z)-from.z)*t)};
+    };
+    auto close = [](STHDPosition a, STHDPosition b) {
+        return std::abs(a.x-b.x)<0.000001f && std::abs(a.y-b.y)<0.000001f &&
+               std::abs(a.z-b.z)<0.000001f;
+    };
+    while (true) {
+        auto au = read_au(input);
+        if (au.empty())
+            break;
+        STHDFrame frame{};
+        expect(sthd_decode_access_unit(decoder.get(), au.data(), au.size(), &frame)==STHD_OK,
+               "decode timed OAMD fixture");
+        STHDFrameMotion motion{};
+        expect(sthd_decoder_motion(decoder.get(), &motion)==STHD_OK && motion.channels==16 &&
+                   motion.valid_samples==((uint64_t(1)<<frame.samples)-1), "motion dimensions");
+        for (unsigned n=0;n<frame.samples;++n) {
+            uint64_t time=samples+n;
+            while (event<std::size(events) && events[event].sample==time) {
+                from=evaluate(time);
+                target=events[event].target;
+                begin=time;
+                duration=events[event].duration;
+                ++event;
+            }
+            expect(close(motion.positions[n][1],evaluate(time)), "sample-exact ramp/offset");
+            expect(close(motion.positions[n][0],{0,1,-1}), "LFE position remains isolated");
+        }
+        auto damaged=au;
+        damaged[damaged.size()/2]^=1;
+        auto saved=motion;
+        expect(sthd_decode_access_unit(decoder.get(),damaged.data(),damaged.size(),&frame)!=STHD_OK,
+               "corrupt timed AU rejected");
+        expect(sthd_decoder_motion(decoder.get(),&motion)==STHD_OK &&
+                   std::memcmp(&motion,&saved,sizeof(motion))==0,
+               "failed AU preserves motion state");
+        samples+=frame.samples;
+    }
+    expect(samples==6417 && event==std::size(events), "complete timed fixture");
+    auto frame=fixture();
+    STHDFrameMotion motion{};
+    motion.samples=40;motion.channels=16;motion.valid_samples=(uint64_t(1)<<40)-1;
+    for(unsigned n=0;n<40;++n) {
+        std::copy_n(frame.positions,16,motion.positions[n]);
+        motion.positions[n][1]=n<18?STHDPosition{-1,1,0}:STHDPosition{1,1,0};
+        frame.pcm[3][n*16+1]=4194304;
+    }
+    std::copy_n(motion.positions[39],16,frame.positions);
+    STHDLayout layout{};sthd_layout_named("7.1.4",&layout);
+    std::array<float,640> pcm{};
+    expect(sthd_render_motion(&frame,&motion,&layout,1,pcm.data(),pcm.size())==STHD_OK,
+           "timed renderer");
+    for(unsigned n=0;n<40;++n)
+        for(unsigned c=0;c<layout.channels;++c)
+            expect(std::abs(pcm[n*layout.channels+c]-((c==(n<18?0U:1U))?.5f:0.f))<0.000001f,
+                   "renderer does not apply future position early");
+    sthd_audio::Ring queue(2,true);
+    std::array<float,80> audio{};
+    motion.channels=2;
+    for(unsigned n=0;n<40;++n)motion.positions[n][1]={-1,1,0};
+    expect(queue.push(audio.data(),40,&motion), "queue first PCM/position span");
+    for(unsigned n=0;n<40;++n)motion.positions[n][1]={1,1,0};
+    expect(queue.push(audio.data(),40,&motion), "queue future PCM/position span");
+    STHDPosition positions[2]{};
+    expect(queue.pop(audio.data(),40,positions)==40 && positions[1].x==-1,
+           "future coordinates cannot overwrite queued PCM");
+    expect(queue.pop(audio.data(),40,positions)==40 && positions[1].x==1,
+           "next coordinates align with next PCM");
+    std::cout<<"timed OAMD: offsets, zero/64/73/512/1536 ramps, future AU, PCM routing, queue: passed\n";
+}
 } // namespace
 int main(int argc, char **argv) {
     try {
@@ -539,6 +819,12 @@ int main(int argc, char **argv) {
             stream_tests(std::filesystem::u8path(argv[2]), argc >= 4 ? argv[3] : "");
         else if ((argc == 3 || argc == 4) && std::string(argv[1]) == "--generate")
             generate(std::filesystem::u8path(argv[2]), argc == 4 ? argv[3] : "");
+        else if (argc==3 && std::string(argv[1])=="--matrix")
+            sthd_matrix_syntax_tests(argv[2]);
+        else if (argc==3 && std::string(argv[1])=="--checksum")
+            checksum_tests(std::filesystem::u8path(argv[2]));
+        else if (argc==3 && std::string(argv[1])=="--motion")
+            motion_tests(std::filesystem::u8path(argv[2]));
         else if (argc != 1)
             throw std::runtime_error("Usage: decoder_tests [--stream INPUT.mlp [REFERENCE_PREFIX] "
                                      "| --generate OUTPUT.wav]");

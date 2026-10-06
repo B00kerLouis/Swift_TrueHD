@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Parses ADM/CHNA programme structure and converts cartesian or polar positions
 // into the normalized coordinates consumed by the spatial coder.

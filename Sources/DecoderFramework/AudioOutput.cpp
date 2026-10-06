@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LGPL-2.1-or-later
 #include "AudioBackend.hpp"
 #include <cmath>
 #include <cstring>
@@ -19,7 +19,8 @@ struct STHDAudioOutput {
     sthd_audio::Ring ring;
     std::unique_ptr<sthd_audio::Driver> driver;
     explicit STHDAudioOutput(const STHDAudioPlan &p)
-        : ring(p.mode == STHD_AUDIO_POSITIONAL_OBJECTS ? p.object_count + 1 : p.layout.channels) {
+        : ring(p.mode == STHD_AUDIO_POSITIONAL_OBJECTS ? p.object_count + 1 : p.layout.channels,
+               p.mode == STHD_AUDIO_POSITIONAL_OBJECTS) {
         driver = sthd_audio::make_native(ring, p);
     }
 };
@@ -83,8 +84,11 @@ STHDStatus sthd_audio_plan(const STHDFrame *f, const STHDAudioCapabilities *c,
     if (explicit_layout && !valid_layout(*explicit_layout))
         return STHD_UNKNOWN_LAYOUT;
     STHDDecodedPresentation view{};
-    auto presentation_status = sthd_presentation(
-        f, f->presentations == 4 ? STHD_PRESENTATION_IMMERSIVE : STHD_PRESENTATION_71, &view);
+    if (f->presentations == 4 &&
+        ((f->element_channels != 12 && f->element_channels != 14 && f->element_channels != 16) ||
+         f->channels[3] != f->element_channels))
+        return STHD_INVALID_ARGUMENT;
+    auto presentation_status = sthd_presentation(f, STHD_PRESENTATION_71, &view);
     if (presentation_status != STHD_OK)
         return presentation_status;
     STHDAudioPlan out{};
@@ -92,7 +96,9 @@ STHDStatus sthd_audio_plan(const STHDFrame *f, const STHDAudioCapabilities *c,
     out.native_device_id = c->native_device_id;
     std::memcpy(out.endpoint, c->endpoint, sizeof(out.endpoint));
     out.presentation = f->presentations == 4 ? STHD_PRESENTATION_IMMERSIVE : STHD_PRESENTATION_71;
-    if (f->presentations == 4 && !explicit_layout && c->spatial_available) {
+    if (f->presentations == 4 && !explicit_layout && c->spatial_available && !f->positions_valid && !fallback)
+        return STHD_UNKNOWN_LAYOUT;
+    if (f->presentations == 4 && f->positions_valid && !explicit_layout && c->spatial_available) {
         if (f->element_channels >= 12 && f->element_channels <= 16 &&
             c->max_dynamic_objects >= f->element_channels - 1 &&
             (c->spatial_speaker_mask & (1U << STHD_LFE))) {
@@ -138,6 +144,10 @@ STHDStatus sthd_audio_plan(const STHDFrame *f, const STHDAudioCapabilities *c,
             return STHD_UNKNOWN_LAYOUT;
         out.layout = c->pcm_layout;
     }
+    if (f->presentations == 4 && !f->positions_valid)
+        for (unsigned i = 0; i < out.layout.channels; ++i)
+            if (out.layout.speakers[i] >= STHD_TFL)
+                return STHD_UNKNOWN_LAYOUT;
     out.backend = c->pcm_backend;
     out.mode = STHD_AUDIO_PCM;
     *p = out;
@@ -179,7 +189,12 @@ STHDAudioOutput *sthd_audio_open(const STHDAudioPlan *p, char *error, size_t n) 
     return nullptr;
 }
 STHDStatus sthd_audio_write(STHDAudioOutput *o, const STHDFrame *f, float gain,
-                            uint32_t timeout) try {
+                            uint32_t timeout) {
+    return sthd_audio_write_motion(o, f, nullptr, gain, timeout);
+}
+STHDStatus sthd_audio_write_motion(STHDAudioOutput *o, const STHDFrame *f,
+                                   const STHDFrameMotion *motion, float gain,
+                                   uint32_t timeout) try {
     if (!o || !f || !std::isfinite(gain) || gain < 0 || o->ring.draining.load())
         return STHD_INVALID_ARGUMENT;
     if (o->ring.stopping.load())
@@ -188,6 +203,9 @@ STHDStatus sthd_audio_write(STHDAudioOutput *o, const STHDFrame *f, float gain,
     if (failure != STHD_OK)
         return failure;
     std::array<float, 640> pcm{};
+    if (motion && (motion->samples != f->samples || motion->first_sample != f->first_sample ||
+                   f->samples < 1 || f->samples > 40))
+        return STHD_INVALID_ARGUMENT;
     if (o->driver->plan.mode == STHD_AUDIO_POSITIONAL_OBJECTS) {
         STHDDecodedPresentation v{};
         auto s = sthd_presentation(f, STHD_PRESENTATION_IMMERSIVE, &v);
@@ -195,25 +213,28 @@ STHDStatus sthd_audio_write(STHDAudioOutput *o, const STHDFrame *f, float gain,
             return s;
         if (v.object_count != o->driver->plan.object_count)
             return STHD_UNSUPPORTED_OUTPUT;
-        if (!o->ring.positions_ready.load()) {
-            for (unsigned i = 0; i < v.object_count; ++i)
-                o->ring.positions[i + 1] = v.objects[i].position;
-            o->ring.positions_ready.store(true, std::memory_order_release);
-        } else
-            for (unsigned i = 0; i < v.object_count; ++i) {
-                auto a = o->ring.positions[i + 1], b = v.objects[i].position;
-                if (a.x != b.x || a.y != b.y || a.z != b.z)
-                    return STHD_UNSUPPORTED_OUTPUT;
-            }
+        if (motion && (motion->channels != o->ring.channels ||
+                       motion->valid_samples != ((uint64_t(1) << f->samples) - 1)))
+            return STHD_UNKNOWN_LAYOUT;
+        if (motion)
+            for (unsigned n = 0; n < f->samples; ++n)
+                for (unsigned c = 0; c < motion->channels; ++c) {
+                    const auto &p = motion->positions[n][c];
+                    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) ||
+                        p.x < -1 || p.x > 1 || p.y < -1 || p.y > 1 || p.z < -1 || p.z > 1)
+                        return STHD_INVALID_ARGUMENT;
+                }
         for (unsigned i = 0; i < f->samples * o->ring.channels; ++i)
             pcm[i] = float(double(f->pcm[3][i]) * double(gain) / 8388608.0);
     } else {
-        auto s = sthd_render(f, &o->driver->plan.layout, gain, pcm.data(), pcm.size());
+        auto s = motion ? sthd_render_motion(f, motion, &o->driver->plan.layout, gain,
+                                             pcm.data(), pcm.size())
+                        : sthd_render(f, &o->driver->plan.layout, gain, pcm.data(), pcm.size());
         if (s != STHD_OK)
             return s;
     }
     auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
-    while (!o->ring.push(pcm.data(), f->samples)) {
+    while (!o->ring.push(pcm.data(), f->samples, motion, f->positions)) {
         if (o->ring.stopping.load())
             return STHD_CANCELLED;
         auto s = o->ring.failure.load();

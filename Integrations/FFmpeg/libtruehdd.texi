@@ -1,0 +1,47 @@
+@section libtruehdd
+
+TrueHD decoding through the independent libtruehdd library, using the
+48 kHz FBA profile with timed OAMD positions. Requires libtruehdd 1.4.1 or
+later and configure option @code{--enable-libtruehdd}. Select this implementation
+explicitly with @code{-c:a libtruehdd} before the input.
+
+@subsection Options
+
+@table @option
+@item presentation
+Select @code{auto} (default), @code{stereo}, @code{5.1}, @code{7.1}, or
+@code{elements}. The core presentations are encoded PCM, without applying DRC.
+@code{elements} returns positional elements in OAMD output order with an
+unspecified speaker layout; their count is not a 7.1.4 or other speaker label.
+
+@item export_metadata
+Export presentation, DRC gain validity/code and OAMD coordinates/motion as copied
+@code{AVFrame.metadata} entries (default enabled). Coordinate entries
+@code{truehdd.element.N.x}, @code{.y}, @code{.z} are signed integer numerators;
+@code{truehdd.xy_denominator} is 31 and @code{truehdd.z_denominator} is 15.
+Moving snapshots are quantized and marked with @code{truehdd.snapshot_quantized}.
+@code{truehdd.positions_dynamic} indicates movement in the stream. Exact
+sample-major/channel-major xyz float32 LE trajectories are copied as base64 in
+@code{truehdd.motion_xyz_f32le}; bit n of @code{truehdd.motion_valid_samples}
+indicates valid coordinates at sample n. Incoming update timing appears in
+@code{truehdd.oamd.sample_offset} and @code{truehdd.oamd.ramp_samples}.
+The normalized room axes are left/right, back/front and floor/height.
+Element 0 is the LFE feed; remaining elements are positional feeds.
+@code{truehdd.drc_gain_valid} is zero until a DRC update is received; the
+gain-code tag is absent while its value is unavailable.
+@code{truehdd.positions_valid} is zero after random access until an OAMD update
+arrives; coordinate and element-kind tags are absent during that interval.
+These dictionary tags do not add public FFmpeg ABI or standardized Atmos
+side data. Raw PCM muxers do not preserve dictionary tags.
+@end table
+
+PCM checksum mismatches warn and mark the output frame corrupt. With
+@code{-err_detect explode}, decoding rejects them transactionally. Transport
+CRC/parity and metadata authentication failures always reject input.
+
+@code{truehdd.oamd.targets_xyz_f32le} carries copied base64 float32 LE targets
+for incoming updates. Targets can arrive before sample coordinates become
+available after startup/seek; coordinate validity is reported separately.
+Decoder 1.4 accepts the tested DME 48 kHz primitive/extended matrices, including
+variable coefficient precision and shift, bypass bits, deterministic dither,
+coefficient delta interpolation, quantization and FIR/IIR state.

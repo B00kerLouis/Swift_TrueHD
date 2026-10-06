@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LGPL-2.1-or-later
 #include "TrueHDDecoder.h"
 #include <algorithm>
 #include <array>
@@ -45,6 +45,7 @@ void usage() {
            "  --format wav|s24le       WAVE/RF64 or packed signed 24-bit little-endian PCM\n"
            "  --gain-db DB             Render gain (-120 to +24 dB, default 0)\n"
            "  --verify-only            Decode and validate all AUs without writing PCM\n"
+           "  --strict-pcm-checksum    Reject PCM-check mismatches (also used by --verify-only)\n"
            "  --device-info            Show the default output device topology\n"
            "PCM: 48 kHz / 24 bit WAVE, RF64 when needed; channel labels in .channels.json.\n"
            "  --play                   Play through the native backend (output file optional)\n"
@@ -179,16 +180,22 @@ struct Wave {
 };
 std::string channels_json(const STHDLayout *layout, const STHDFrame &frame, int presentation) {
     std::string out = "{\n  \"sampleRate\": 48000,\n  \"validBits\": 24,\n  \"drcApplied\": "
-                      "false,\n  \"channels\": [\n";
+                      "false,\n";
+    if (presentation == 3)
+        out += std::string("  \"positionsValid\": ") +
+               (frame.positions_valid ? "true,\n" : "false,\n");
+    out += "  \"channels\": [\n";
     unsigned channels = layout ? layout->channels : frame.channels[unsigned(presentation)];
     for (unsigned c = 0; c < channels; ++c) {
         out += "    {\"index\": " + std::to_string(c) + ", ";
         if (presentation == 3) {
-            auto p = frame.positions[c];
-            out += "\"element\": " + std::to_string(c) +
-                   ", \"lfe\": " + (c == 0 ? std::string("true") : std::string("false")) +
-                   ", \"x\": " + std::to_string(p.x) + ", \"y\": " + std::to_string(p.y) +
-                   ", \"z\": " + std::to_string(p.z);
+            out += "\"element\": " + std::to_string(c);
+            if (frame.positions_valid) {
+                auto p = frame.positions[c];
+                out += ", \"lfe\": " + (c == 0 ? std::string("true") : std::string("false")) +
+                       ", \"x\": " + std::to_string(p.x) + ", \"y\": " + std::to_string(p.y) +
+                       ", \"z\": " + std::to_string(p.z);
+            }
         } else {
             STHDSpeaker s = layout->speakers[c];
             out += "\"speaker\": \"" + std::string(sthd_speaker_name(s)) + "\"";
@@ -204,7 +211,7 @@ int run(const std::vector<std::string> &args) {
     std::string input, output, name = "auto", order;
     int presentation = -1;
     bool verify = false, device = false, layout_selected = false, raw_pcm = false, play = false,
-         pcm_fallback = false;
+         pcm_fallback = false, strict_checksum = false;
     double gain_db = 0;
     const bool play_command = !args.empty() && args[0] == "play";
     if (play_command)
@@ -255,6 +262,8 @@ int run(const std::vector<std::string> &args) {
                 fail("format must be wav or s24le");
         } else if (a == "--verify-only")
             verify = true;
+        else if (a == "--strict-pcm-checksum")
+            strict_checksum = true;
         else if (a == "--device-info")
             device = true;
         else if (a == "--play")
@@ -378,9 +387,16 @@ int run(const std::vector<std::string> &args) {
         if (!player)
             fail(message);
     }
+    if (player)
+        check(sthd_player_set_strict_pcm_checksum(player.get(), strict_checksum || verify));
+    else
+        check(sthd_decoder_set_strict_pcm_checksum(decoder.get(), strict_checksum || verify));
     std::unique_ptr<Wave> wave;
     std::unique_ptr<File> sidecar;
     STHDFrame frame{};
+    STHDFrameMotion motion{};
+    STHDPCMChecksum checksum{};
+    bool warned_checksum = false, sidecar_update = false;
     uint64_t au = 0, samples = 0, clipped = 0;
     double peak = 0;
     bool output_announced = false;
@@ -409,6 +425,7 @@ int run(const std::vector<std::string> &args) {
             if (consumed != size)
                 fail("player did not accept the complete AU");
             check(sthd_player_last_frame(player.get(), &frame));
+            check(sthd_player_last_motion(player.get(), &motion));
             if (!output_announced) {
                 STHDPlayerStats stats{};
                 check(sthd_player_stats(player.get(), &stats));
@@ -423,18 +440,43 @@ int run(const std::vector<std::string> &args) {
             if (status != STHD_OK)
                 fail("AU " + std::to_string(au) + ": " + sthd_status_string(status) + ": " +
                      sthd_decoder_error(decoder.get()));
+            check(sthd_decoder_motion(decoder.get(), &motion));
+        }
+        check(player ? sthd_player_pcm_checksum(player.get(), &checksum)
+                     : sthd_decoder_pcm_checksum(decoder.get(), &checksum));
+        if (checksum.mismatched_layers && !warned_checksum) {
+            std::cerr << "warning: PCM checksum mismatch at AU " << au
+                      << "; decoding transmitted PCM, use --strict-pcm-checksum to reject\n";
+            warned_checksum = true;
         }
         if (!verify && !output.empty()) {
             if (presentation == 3 && frame.presentations < 4)
                 fail("stream has no Atmos element presentation");
             if (!wave) {
                 sidecar = std::make_unique<File>(fs::u8path(output + ".channels.json"));
-                auto json =
-                    channels_json(presentation == 3 ? nullptr : &layout, frame, presentation);
-                sidecar->write(json.data(), json.size());
+                if (presentation == 3) {
+                    const std::string start = "{\n  \"positionUpdates\": [\n";
+                    sidecar->write(start.data(), start.size());
+                }
                 wave = std::make_unique<Wave>(
                     destination, presentation == 3 ? frame.element_channels : layout.channels,
                     presentation == 3 ? 0 : sthd_wave_channel_mask(&layout), raw_pcm);
+            }
+            if (presentation == 3 && motion.update_count) {
+                for (unsigned u = 0; u < motion.update_count; ++u) {
+                    const auto &update = motion.updates[u];
+                    std::string json = sidecar_update ? ",\n" : "";
+                    json += "    {\"sample\": " + std::to_string(frame.first_sample + update.sample_offset) +
+                            ", \"rampSamples\": " + std::to_string(update.ramp_samples) + ", \"targets\": [";
+                    for (unsigned c = 0; c < frame.element_channels; ++c) {
+                        const auto &p = update.targets[c];
+                        if (c) json += ", ";
+                        json += "[" + std::to_string(p.x) + ", " + std::to_string(p.y) + ", " + std::to_string(p.z) + "]";
+                    }
+                    json += "]}";
+                    sidecar->write(json.data(), json.size());
+                    sidecar_update = true;
+                }
             }
             if (presentation >= 0) {
                 const int32_t *pcm = frame.pcm[unsigned(presentation)];
@@ -445,8 +487,9 @@ int run(const std::vector<std::string> &args) {
             } else {
                 std::array<float, 40 * 16> rendered{};
                 std::array<int32_t, 40 * 16> pcm{};
-                check(sthd_render(&frame, &layout, float(std::pow(10.0, gain_db / 20)),
-                                  rendered.data(), rendered.size()));
+                check(sthd_render_motion(&frame, &motion, &layout,
+                                         float(std::pow(10.0, gain_db / 20)),
+                                         rendered.data(), rendered.size()));
                 for (unsigned i = 0; i < frame.samples * layout.channels; ++i) {
                     double v = double(rendered[i]) * 8388608.0;
                     peak = std::max(peak, std::abs(v) / 8388608.0);
@@ -459,9 +502,9 @@ int run(const std::vector<std::string> &args) {
         }
         samples += frame.samples;
         ++au;
-        if (frame.samples < 40) {
+        if (player ? sthd_player_end_of_stream(player.get()) : sthd_decoder_end_of_stream(decoder.get())) {
             if (input != "-" && in.peek() != EOF)
-                fail("data follows final PCM trim marker");
+                fail("data follows stream termination marker");
             break;
         }
     }
@@ -478,6 +521,15 @@ int run(const std::vector<std::string> &args) {
                   << ", underruns=" << stats.audio.underruns << "\n";
     }
     if (wave) {
+        // Targets were streamed alongside PCM; the channel list is the final snapshot.
+        auto json = channels_json(presentation == 3 ? nullptr : &layout, frame, presentation);
+        if (presentation == 3) {
+            std::string finish = "\n  ],\n  \"positionsDynamic\": " + std::string(motion.positions_dynamic ? "true" : "false") +
+                ",\n  \"positionsSnapshotSample\": " + std::to_string(frame.first_sample + frame.samples - 1) + ",\n";
+            sidecar->write(finish.data(), finish.size());
+            json.erase(0, 2);
+        }
+        sidecar->write(json.data(), json.size());
         wave->finish();
         sidecar->finish();
         wave->file.committed = true;
@@ -485,6 +537,7 @@ int run(const std::vector<std::string> &args) {
     }
     std::cout << "Decoded " << au << " AUs, " << samples << " samples, " << double(samples) / 48000
               << " seconds, " << frame.element_channels << " Atmos elements\n";
+    std::cout << "PCM checksum mismatches=" << checksum.total_mismatches << "\n";
     if (wave)
         std::cout << "Wrote " << wave->channels << " channels; peak=" << peak
                   << ", clipped samples=" << clipped << ", DRC disabled\n";

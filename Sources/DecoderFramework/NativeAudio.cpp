@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LGPL-2.1-or-later
 #include "AudioBackend.hpp"
 #include <cmath>
 #include <cstring>
@@ -537,7 +537,8 @@ struct WindowsDriver final : Driver {
                 stream->EndUpdatingAudioObjects();
                 throw std::runtime_error("spatial quantum exceeds negotiated size");
             }
-            unsigned got = ring.pop(scratch.data(), frames);
+            std::array<STHDPosition, 16> quantum_positions{};
+            unsigned got = ring.pop(scratch.data(), frames, quantum_positions.data());
             std::fill(scratch.data() + size_t(got) * ring.channels,
                       scratch.data() + size_t(frames) * ring.channels, 0.f);
             if (got < frames && !ring.draining.load())
@@ -551,8 +552,8 @@ struct WindowsDriver final : Driver {
                 auto *dst = reinterpret_cast<float *>(buffer);
                 for (unsigned f = 0; f < frames; ++f)
                     dst[f] = scratch[size_t(f) * ring.channels + i];
-                if (plan.mode == STHD_AUDIO_POSITIONAL_OBJECTS && i) {
-                    auto p = ring.positions[i];
+                if (plan.mode == STHD_AUDIO_POSITIONAL_OBJECTS && i && got) {
+                    auto p = quantum_positions[i];
                     check(objects[i]->SetPosition(p.x * plan.room_half_width_m,
                                                   p.z * plan.room_height_m,
                                                   -p.y * plan.room_half_depth_m));

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Plans the MLP access-unit input timeline at the declared peak transport
 // rate. Output timing remains the fixed 40-sample TrueHD cadence; input timing

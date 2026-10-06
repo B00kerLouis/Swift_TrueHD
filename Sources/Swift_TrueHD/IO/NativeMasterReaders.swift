@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Native readers expose DAMF, CAF, ADM, and IAB sources through one random-access
 // PCM interface so the encoder does not require intermediate media files.

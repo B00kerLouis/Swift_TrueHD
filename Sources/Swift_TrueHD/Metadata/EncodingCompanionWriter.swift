@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Writes deterministic machine-readable and human-readable job companions only
 // after the elementary stream has completed successfully.

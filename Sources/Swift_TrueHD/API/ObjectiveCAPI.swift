@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Objective-C-compatible wrappers preserve the same configuration defaults,
 // progress reporting, and result metadata as the native Swift API.

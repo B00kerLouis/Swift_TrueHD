@@ -1,0 +1,125 @@
+diff --git a/Changelog b/Changelog
+index 876497f..ab812e1 100644
+--- a/Changelog
++++ b/Changelog
+@@ -17,6 +17,8 @@ version <next>:
+ - Rhetorex ADPCM decoder
+ - ADPCM IMA Citrix decoder
+ 
++- independent TrueHD decoder via libtruehdd
++
+ 
+ version 9.0:
+ - Extend AMF Color Converter (vf_vpp_amf) HDR capabilities
+diff --git a/configure b/configure
+index 759cb8d..53f83ae 100755
+--- a/configure
++++ b/configure
+@@ -290,6 +290,7 @@ External library support:
+   --enable-libtls          enable LibreSSL (via libtls), needed for https support
+                            if openssl, gnutls or mbedtls is not used [no]
+   --enable-libtorch        enable Torch as one DNN backend [no]
++  --enable-libtruehdd      enable independent TrueHD decoding via libtruehdd [no]
+   --enable-libtwolame      enable MP2 encoding via libtwolame [no]
+   --enable-libuavs3d       enable AVS3 decoding via libuavs3d [no]
+   --enable-libv4l2         enable libv4l2/v4l-utils [no]
+@@ -2121,6 +2122,7 @@ EXTERNAL_LIBRARY_LIST="
+     libtheora
+     libtls
+     libtorch
++    libtruehdd
+     libtwolame
+     libuavs3d
+     libv4l2
+@@ -3850,6 +3852,8 @@ libsvtjpegxs_encoder_deps="libsvtjpegxs"
+ libsvtjpegxs_decoder_deps="libsvtjpegxs"
+ libsvtav1_encoder_select="dovi_rpuenc"
+ libtheora_encoder_deps="libtheora"
++libtruehdd_decoder_deps="libtruehdd"
++libtruehdd_decoder_select="mlp_parser"
+ libtwolame_encoder_deps="libtwolame"
+ libuavs3d_decoder_deps="libuavs3d"
+ libvo_amrwbenc_encoder_deps="libvo_amrwbenc"
+@@ -7346,6 +7350,7 @@ enabled libtheora         && { check_pkg_config libtheora theoraenc theora/theor
+ enabled libtls            && require_pkg_config libtls libtls tls.h tls_configure &&
+                              { enabled gpl && ! enabled nonfree && die "ERROR: LibreSSL is incompatible with the gpl"; }
+ enabled libtorch          && check_cxxflags -std=c++17 && require_cxx libtorch torch/torch.h "torch::Tensor" -ltorch -lc10 -ltorch_cpu -lstdc++ -lpthread
++enabled libtruehdd        && require_pkg_config libtruehdd "truehdd >= 1.4.1" TrueHDDecoder.h "sthd_decoder_create sthd_decoder_drc_valid sthd_decoder_motion sthd_decoder_pcm_checksum sthd_decoder_set_strict_pcm_checksum sthd_decoder_end_of_stream sthd_abi_version"
+ enabled libtwolame        && require libtwolame twolame.h twolame_init -ltwolame &&
+                              { check_lib libtwolame twolame.h twolame_encode_buffer_float32_interleaved -ltwolame ||
+                                die "ERROR: libtwolame must be installed and version must be >= 0.3.10"; }
+diff --git a/doc/decoders.texi b/doc/decoders.texi
+index 5652252..4ddcb7c 100644
+--- a/doc/decoders.texi
++++ b/doc/decoders.texi
+@@ -418,6 +418,8 @@ configuration. You need to explicitly configure the build with
+ An FFmpeg native decoder for Opus exists, so users can decode Opus
+ without this library.
+ 
++@include libtruehdd.texi
++
+ @section pcm_dvda
+ 
+ PCM DVD-Audio decoder.
+diff --git a/doc/general_contents.texi b/doc/general_contents.texi
+index 597314a..50c0ff1 100644
+--- a/doc/general_contents.texi
++++ b/doc/general_contents.texi
+@@ -1516,6 +1516,8 @@ following image formats are supported:
+ @item True Audio (TTA)       @tab  X  @tab  X
+ @item TrueHD                 @tab  X  @tab  X
+     @tab Used in HD-DVD and Blu-Ray discs.
++@item TrueHD (libtruehdd)      @tab     @tab  X
++    @tab timed immersive decoding through external libtruehdd
+ @item TwinVQ (VQF flavor)    @tab     @tab  X
+ @item VIMA                   @tab     @tab  X
+     @tab Used in LucasArts SMUSH animations.
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index ece43a4..173fd32 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -1226,6 +1226,7 @@ OBJS-$(CONFIG_LIBSVTAV1_ENCODER)          += libsvtav1.o
+ OBJS-$(CONFIG_LIBSVTJPEGXS_DECODER)       += libsvtjpegxsdec.o
+ OBJS-$(CONFIG_LIBSVTJPEGXS_ENCODER)       += libsvtjpegxsenc.o
+ OBJS-$(CONFIG_LIBTHEORA_ENCODER)          += libtheoraenc.o
++OBJS-$(CONFIG_LIBTRUEHDD_DECODER)         += libtruehdddec.o
+ OBJS-$(CONFIG_LIBTWOLAME_ENCODER)         += libtwolame.o
+ OBJS-$(CONFIG_LIBUAVS3D_DECODER)          += libuavs3d.o
+ OBJS-$(CONFIG_LIBVO_AMRWBENC_ENCODER)     += libvo-amrwbenc.o
+diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
+index 9c3d62f..e690e6b 100644
+--- a/libavcodec/allcodecs.c
++++ b/libavcodec/allcodecs.c
+@@ -814,6 +814,7 @@ extern const FFCodec ff_libsvtav1_encoder;
+ extern const FFCodec ff_libsvtjpegxs_encoder;
+ extern const FFCodec ff_libsvtjpegxs_decoder;
+ extern const FFCodec ff_libtheora_encoder;
++extern const FFCodec ff_libtruehdd_decoder;
+ extern const FFCodec ff_libtwolame_encoder;
+ extern const FFCodec ff_libuavs3d_decoder;
+ extern const FFCodec ff_libvo_amrwbenc_encoder;
+diff --git a/libavcodec/version.h b/libavcodec/version.h
+index 2618016..65bc52f 100644
+--- a/libavcodec/version.h
++++ b/libavcodec/version.h
+@@ -29,7 +29,7 @@
+ 
+ #include "version_major.h"
+ 
+-#define LIBAVCODEC_VERSION_MINOR  17
++#define LIBAVCODEC_VERSION_MINOR  18
+ #define LIBAVCODEC_VERSION_MICRO 100
+ 
+ #define LIBAVCODEC_VERSION_INT  AV_VERSION_INT(LIBAVCODEC_VERSION_MAJOR, \
+diff --git a/tests/Makefile b/tests/Makefile
+index bd83c8d..4f2fc34 100644
+--- a/tests/Makefile
++++ b/tests/Makefile
+@@ -217,6 +217,7 @@ include $(SRC_PATH)/tests/fate/libavformat.mak
+ include $(SRC_PATH)/tests/fate/libavutil.mak
+ include $(SRC_PATH)/tests/fate/libswresample.mak
+ include $(SRC_PATH)/tests/fate/libswscale.mak
++include $(SRC_PATH)/tests/fate/libtruehdd.mak
+ include $(SRC_PATH)/tests/fate/lossless-audio.mak
+ include $(SRC_PATH)/tests/fate/lossless-video.mak
+ include $(SRC_PATH)/tests/fate/matroska.mak

@@ -2,7 +2,13 @@
 
 该项目新增两个独立 Xcode Target：`decoder_framework`（`libtruehdd.framework` 静态 Framework）和 `decoder_cli`（`truehdd`）。所有解码、校验、空间渲染、设备探测和 CLI 实现仅使用 C/C++，不链接 Swift encoder、FFmpeg 或外部解码器。原有源文件、测试、README 和已有 Scheme 保持本次工作开始时的内容。
 
-本 decoder 支持当前项目生成的 48 kHz TrueHD FBA elementary stream：普通 2/6/8 层和 Atmos 2/6/8/12、14、16 层。MXF 是 encoder 输入；decoder 输入是 encoder 输出的 `.mlp`。目前不包含 MXF/MKV demux、通用商业 TrueHD/MLP 全格式解码、移动 OAMD、IIR、噪声矩阵、bypass LSB 或动态 DRC 播放处理；不支持的语法明确报错。
+本 decoder 支持当前项目生成的 48 kHz TrueHD FBA elementary stream：普通 2/6/8 层和 Atmos 2/6/8/12、14、16 层。MXF 是 encoder 输入；decoder 输入是 encoder 输出的 `.mlp`。目前不包含 MXF/MKV demux、TrueHD/MLP 全格式解码或动态 DRC 播放处理；不支持的语法明确报错。
+
+## License and FFmpeg submission review
+
+Decoder Framework、CLI、测试、FFmpeg 适配层和文档使用 `LGPL-2.1-or-later`，与 FFmpeg 默认许可一致；完整文本见 [LGPL](../LICENSES/LGPL-2.1-or-later.txt)，范围见 [LICENSE](../LICENSE)。Encoder 的研究用途、商业使用、逆向和非 Swift 移植限制不适用于 Decoder。
+
+独立 Decoder 的 FFmpeg 适配层、构建和测试见 [Integrations/FFmpeg](../Integrations/FFmpeg/README.md)，修复及验证状态见 [FFMPEG_REVIEW.md](FFMPEG_REVIEW.md)。通过 `-c:a libtruehdd` 显式选择独立实现，不修改 FFmpeg 的 `mlpdec`；Xcode Framework/CLI 保持原构建图。
 
 ## macOS / Xcode
 
@@ -28,6 +34,8 @@ Build/Products/Release/truehdd --device-info
 
 输出为 48 kHz / 24-bit WAVE，超过 RIFF 长度范围自动使用 RF64。每个输出附带 `.channels.json`，记录准确的声道顺序；元素提取还记录 OAMD 坐标。WAVE 标准没有可移植的 Top Middle / Front Wide 位定义，含这些声道的输出使用零 channel mask，必须依照 sidecar 配置播放器，不能按一般的 16-channel WAVE 默认顺序解释。设备顺序与 WAVE mask 顺序不一致时同样使用 sidecar。
 
+元素 sidecar 流式记录已获得的 OAMD target、时间与 ramp，输出完成时写入最后采样的坐标快照和 dynamic 标记。随机访问后若整个片段都未收到 OAMD，`positionsValid=false` 且省略坐标和 LFE/object 标签；PCM 元素及其顺序仍保留，不将初始化的零数组当作真实位置。
+
 CLI 支持 `--format s24le` 输出无头 packed PCM，支持 `--play` 使用独立的 native backend 实际播放。CoreAudio、WASAPI/Windows Spatial Audio、PipeWire 分别处理系统协商和调度；普通 Windows PCM 不进入 Spatial pipeline。详见 [原生音频架构](AUDIO_ARCHITECTURE.md)。
 
 ## Windows / Linux / C++ builder
@@ -40,7 +48,7 @@ cmake --build Build/DecoderPortable --config Release
 ctest --test-dir Build/DecoderPortable -C Release --output-on-failure
 ```
 
-Windows 可使用 MSVC 或 MinGW；CLI 使用 Unicode 命令行与路径，设备布局来自 WASAPI shared mix format 的实际 channel mask。MinGW CLI 静态链接编译器运行库。Windows 的 standard WAVE mask 无法表示完整的 Top Middle / Front Wide，因此这类离散多通道接口应由宿主传入实际 `STHDLayout`，或通过 CLI 显式指定。
+Windows 可使用 MSVC 或 MinGW；CLI 使用 Unicode 命令行与路径，设备布局来自 WASAPI shared mix format 的实际 channel mask。MinGW CLI 静态链接自身的编译器运行库；共享 `truehdd.dll` 的 MinGW 运行库依赖仍需随 DLL 部署，本轮构建为 `libstdc++-6.dll`、`libgcc_s_seh-1.dll` 和 `libwinpthread-1.dll`。Windows 的 standard WAVE mask 无法表示完整的 Top Middle / Front Wide，因此这类离散多通道接口应由宿主传入实际 `STHDLayout`，或通过 CLI 显式指定。
 
 Linux 在找到 `libpipewire-0.3` 开发包时优先编译 PipeWire capability/playback；默认 sink 的实际 profile 和 positions 决定布局。无 PipeWire 时仍可离线 decode/render，旧 ALSA 查询可作为兼容查询路径。未知或离散通道需要显式布局，实时 player 需要 PipeWire。可用 `-DSTHD_NATIVE_DEVICE=OFF` 构建完全不依赖平台音频 API 的核心。
 
@@ -80,3 +88,21 @@ GitHub Actions workflow 为 `.github/workflows/native-build.yml`：macOS 通过 
 ## Encoded real-time playback API
 
 C ABI v3 adds `sthd_player_create/feed/finish/cancel/stats/last_frame/destroy` for arbitrary encoded byte chunks. CLI `truehdd play -i INPUT.mlp` and `-i -` use the same session. Windows/Linux CMake products are shared `truehdd.dll` / `libtruehdd.so`, with C-only exported API. See [PLAY_API.md](PLAY_API.md) for lifecycle, backpressure and ownership.
+
+### 移动 OAMD 与 PCM 校验
+
+Decoder 1.3 支持当前 metadata 语法的移动坐标、sample offset、block offset 和
+跨 AU 线性 ramp。C ABI v3 frame 保持兼容；motion 查询和渲染 API 提供逐采样坐标。
+元素输出的 `.channels.json` 流式记录目标、采样时刻和 ramp 长度，末尾坐标明确标注
+为最后采样快照。PCM 校验不一致默认报告后继续按传输矩阵解码；
+`--strict-pcm-checksum` 或 `--verify-only` 使其成为事务性失败。
+传输 CRC、parity 和 metadata 认证失败始终拒绝。详见 `PLAY_API.md` 和验证记录。
+
+### Official matrix compatibility (Decoder 1.4)
+
+支持已验证的 DME 6.5.4 48 kHz FBA 矩阵语法：primitive noise columns、extended
+系数精度/移位、dither、bypass LSB、delta interpolation、quantization 和 FIR/IIR state。
+DME 12/14/16 元素全片严格校验通过；16 元素文件的四层 PCM 与 FFmpeg/DRP 逐采样一致。
+两种码流的字段与统计差异见 [MATRIX_COMPATIBILITY.md](MATRIX_COMPATIBILITY.md)。
+启动/seek 的位置渐变若缺少起点，会保留 target 并标记坐标暂不可用；普通核心声道播放
+仍可使用，空间渲染需要 preroll。Encoder 源码和 Xcode 构建图保持不变。

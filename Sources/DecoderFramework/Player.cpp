@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LGPL-2.1-or-later
 #include "include/TrueHDDecoder.h"
 #include <algorithm>
 #include <array>
@@ -23,6 +23,7 @@ struct STHDPlayer {
     std::array<uint8_t, STHD_MAX_ACCESS_UNIT> buffer{};
     size_t buffered = 0, expected = 4;
     STHDFrame frame{};
+    STHDFrameMotion motion{};
     STHDAudioPlan plan{};
     STHDPlayerStats stats{};
     STHDStatus failure = STHD_OK;
@@ -82,7 +83,7 @@ struct STHDPlayer {
             if (result != STHD_OK)
                 return result;
         }
-        result = sthd_audio_write(audio.get(), &frame, options.gain, timeout);
+        result = sthd_audio_write_motion(audio.get(), &frame, &motion, options.gain, timeout);
         if (result == STHD_TIMEOUT) {
             std::snprintf(error, sizeof(error), "playback backpressure; retry pending frame");
             return result;
@@ -186,10 +187,13 @@ STHDStatus sthd_player_feed(STHDPlayer *p, const uint8_t *data, size_t bytes, si
                                                  &p->frame);
                 if (result != STHD_OK)
                     return p->fail(result, sthd_decoder_error(p->decoder.get()));
+                result = sthd_decoder_motion(p->decoder.get(), &p->motion);
+                if (result != STHD_OK)
+                    return p->fail(result, "decoded motion unavailable");
                 p->buffered = 0;
                 p->expected = 4;
                 p->pending = true;
-                p->end_marker = p->frame.samples < 40;
+                p->end_marker = sthd_decoder_end_of_stream(p->decoder.get()) != 0;
                 ++p->stats.decoded_access_units;
                 p->stats.decoded_samples += p->frame.samples;
                 continue;
@@ -200,7 +204,7 @@ STHDStatus sthd_player_feed(STHDPlayer *p, const uint8_t *data, size_t bytes, si
             return STHD_OK;
         }
         if (p->end_marker)
-            return p->fail(STHD_CORRUPT_STREAM, "data follows final PCM trim marker");
+            return p->fail(STHD_CORRUPT_STREAM, "data follows stream termination marker");
         size_t n = std::min(bytes - *consumed, p->expected - p->buffered);
         std::copy_n(data + *consumed, n, p->buffer.data() + p->buffered);
         p->buffered += n;
@@ -271,6 +275,21 @@ STHDStatus sthd_player_last_frame(const STHDPlayer *p, STHDFrame *f) {
     *f = p->frame;
     return STHD_OK;
 }
+STHDStatus sthd_player_last_motion(const STHDPlayer *p, STHDFrameMotion *motion) {
+    if (!p || !motion)
+        return STHD_INVALID_ARGUMENT;
+    if (!p->stats.decoded_access_units)
+        return STHD_NEED_RESTART;
+    *motion = p->motion;
+    return STHD_OK;
+}
+STHDStatus sthd_player_pcm_checksum(const STHDPlayer *p, STHDPCMChecksum *checksum) {
+    return p ? sthd_decoder_pcm_checksum(p->decoder.get(), checksum) : STHD_INVALID_ARGUMENT;
+}
+STHDStatus sthd_player_set_strict_pcm_checksum(STHDPlayer *p, int strict) {
+    return p ? sthd_decoder_set_strict_pcm_checksum(p->decoder.get(), strict) : STHD_INVALID_ARGUMENT;
+}
+uint32_t sthd_player_end_of_stream(const STHDPlayer *p) { return p && p->end_marker; }
 const char *sthd_player_error(const STHDPlayer *p) { return p ? p->error : "null player"; }
 void sthd_player_cancel(STHDPlayer *p) {
     if (!p)

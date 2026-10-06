@@ -1,0 +1,17 @@
+TrueHD Decoder
+Copyright (c) 2026 B00kerLouis.
+
+The independent C/C++ Decoder Framework, public C API, CLI, tests, decoder build
+support and Decoder documentation are licensed under the GNU Lesser General
+Public License, version 2.1 or (at your option) any later version
+(SPDX-License-Identifier: LGPL-2.1-or-later).
+
+They are provided without warranty, including any implied warranty of
+merchantability or fitness for a particular purpose. See the complete GNU
+Lesser General Public License for the applicable terms.
+
+The complete text is distributed as LGPL-2.1-or-later.txt, located in LICENSES/
+in the source repository and share/licenses/truehdd/ in CMake installations.
+Third-party libraries retain their own licenses. The Encoder's separate
+research, language, reverse-engineering and commercial-use restrictions do not
+apply to this Decoder.

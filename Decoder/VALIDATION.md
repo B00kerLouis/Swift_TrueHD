@@ -122,3 +122,126 @@ Local MinGW build produces `truehdd.dll` and confirms all `sthd_player_*` export
 Auto now reads endpoint metadata for all supported configurations, preserving physical slot order. Shared validation covers all nine primary families, back-label variants, reversed maps and absent/duplicate/incompatible positions. CoreAudio SDK tag/bitmap expansion tests verify both MPEG 7.1 and bitmap/WAVE 7.1 rear/side ordering. Windows uses the mix mask or the endpoint PhysicalSpeakers property and never converts an absent mask to stereo by channel count. PipeWire integration adds reversed 7.1/7.1.4/9.1.6 and rejects 16 AUX positions.
 
 The actual local device reported Unknown channel labels but an explicit preferred stereo-channel pair L=1/R=2 for its two active slots. That OS declaration establishes this device's route; it is not a default layout for other terminals. The user's exact QWER_TBH_A.mlp playback path was tested with `--play --layout auto`, default gain, and no manual layout: 275,900 AUs, 11,036,000 decoded and consumed frames, underruns=0, complete 229.916667-second programme. Multi-channel terminal maps are independently read from their OS metadata and are not inferred from this local test.
+
+## Independent FFmpeg adapter — 2026-10-06
+
+Decoder 1.2.0 adds the independent `libtruehdd` FFmpeg C wrapper and corrects
+reset/random-access checksums, inherited metadata validity and major-sync
+extension/profile parsing. Frame layout and C ABI v3 remain unchanged;
+`sthd_decoder_drc_valid` adds an explicit validity query. The existing Xcode
+graph and Encoder implementation are preserved.
+
+Local results: Xcode decoder_cli Release/framework Debug, CMake CTest 5/5,
+15 independent PCM FATE hashes, 15 API lifecycle/metadata/error cases (also with
+adapter/core ASan/UBSan), configured FFmpeg `make fate` 317/317, and 47,521
+structured fuzz runs. Original synthetic streams and reference hashes are
+checked in under `Integrations/FFmpeg/fixtures`; no Encoder runtime is required
+for those decoder tests. See [FFMPEG_REVIEW.md](FFMPEG_REVIEW.md) for scope,
+commands, evidence paths and platform boundaries.
+
+## Moving OAMD / supplied July stream — 2026-10-06
+
+本次输入为外置盘的 `Dolby_NaturesFury/Rederer/Dolby_NaturesFury_TrueHD.mlp`，
+SHA-256 `600833445efbeb5a7d545ef7429396aab47cc5b6cdb0fbfa53bf49c4c920c175`，
+71,797,242 bytes。它与上表重新编码的 NaturesFury fixture 是不同码流。
+完整解码 130,000 AUs、5,200,000 samples、16 elements，时长 108.333333 秒。
+
+原先 AU 76 的移动 OAMD 拒绝已移除，改为解析 sample/block offset、目标与 ramp，
+逐采样计算坐标并保持跨 AU 状态。无 offset/运动字段的猜测兼容分支。
+随后 AU 372（从零开始）第四呈现暴露 PCM checksum：expected `63`、actual `e4`。
+完整文件共 96 次不一致，其余传输 CRC/parity/认证检查通过。历史初始 encoder 源码
+在普通 AU 中继承已传输矩阵，而其 `updateLosslessChecks` 按每 AU 的目标矩阵计算；
+该路径可以产生这样的不一致。没有修改 encoder、输入文件或强行更改 PCM 来匹配
+8-bit checksum。默认报告并恢复传输矩阵定义的 PCM；严格验证在 AU 372 拒绝。
+
+DRP 4.2 的官方 GStreamer decoder 作为本机外部 oracle，使用其公开属性：
+`dlbtruehdparse align-major-sync=false enable-metadata=true`，
+`dlbtruehddec presentation=16 out-ch-config=raw max-errors=0 drc-mode=disabled`，
+输出完整 332,800,000-byte S32LE。直接用 parser 默认 major-sync 对齐会造成喂入错误，
+该失败结果未作为参考。DRP CLI 的 renderer 路径另完成完整 7.1 WAVE 导出。
+
+DRP raw 输出仍带约 -8 dB 增益和 S32 `-256` 偏移，不能声称直接逐字节一致。
+增益仅用未经过逆矩阵的 object channel 12 的前 100,000 samples 校准为
+`0.398106068321705031`。将全片参考加回偏移、除以该增益并量化到 encoded 20-bit
+网格（S32 step 4096），比较全部 83,200,000 个通道采样，差异为零。
+校准方式和完整日志保留在 `Build/MovingOAMD/`；此结果是解码元素 PCM 交叉验证，
+不是 renderer 的逐位认证。Raw reference SHA-256 为
+`1307a41ba63dc4fe7ff65d5394a5f085e6689f4bd6f34038c16d9bf96d4a173d`。
+
+| 验证 | 结果 |
+|---|---|
+| Xcode decoder_cli Release / decoder_framework Debug | 成功，arm64 + x86_64；最后构建无自有源码警告 |
+| CMake CTest | 7/7，包括 timed OAMD、严格/报告 checksum、事务性 retry |
+| ASan/UBSan | 7/7；给定文件完整立体声解码，无 sanitizer 报告 |
+| CoreAudio 实际播放，gain 0 dB | decoded/consumed 5,200,000 frames；underruns 0 |
+| Stereo WAVE | peak 0.569202，clipped samples 0 |
+| Raw 16-element PCM | peak 0.470465，clipped samples 0；MD5 `5d1b822afc7e2fb3203ab9e70c5720ff` |
+| 独立 FFmpeg adapter 全文件 elements | 同上 MD5，PCM 不受 metadata 导出开关影响 |
+| FFmpeg adapter API / PCM FATE | 16 fixture API cases、16 FATE，另通过给定文件完整 130,000 AU 的 API/motion/帧错误标记验证 |
+| Windows MinGW / Linux Zig x86_64 | DLL/import library、SO/SONAME 1、CLI 与测试交叉构建成功；不等同原生设备运行 |
+
+`timed-16.mlp` 是原 synthetic-16 的音频子流加当前 encoder 自身认证的 timed OAMD，
+没有替换其音频数据。它覆盖 offset 18、7、33、跨 AU 73，0/64/73/512/1536 ramp，
+中断渐变、seek 后新 metadata、LFE 保留与 FIFO 坐标对应 PCM。生成 oracle 仅在
+ignored Build 目录内，不属于 decoder 产品。Element CLI sidecar 流式记录每次 update，
+不把最后快照误当作整段固定坐标。开始时的 encoder source hashes 均保持一致。
+
+## Official matrix compatibility — 2026-10-06
+
+Decoder 1.4 完整解码本机 DME 6.5.4 的 NaturesFury 12/14/16 elements，均为
+130,010 AUs、5,200,384 samples，严格 PCM checksum 不一致为零。DME-16 四层
+166,412,288 个通道采样与 FFmpeg/DRP 参考逐样本一致；未进行 gain fitting 或 PCM 修正。
+当前 Swift Encoder 的重新编码输出仍严格通过，Encoder/CLI 源码哈希保持本轮起始值。
+
+CMake 和 ASan/UBSan 8/8（含独立矩阵语法向量），DME-16 全片 sanitizer 严格解码通过。
+Xcode Framework Debug / CLI Release 成功；Windows MinGW、Linux Zig 交叉构建成功。
+CoreAudio gain zero 全片 player test：89259600 bytes、130010 AUs，decoded/submitted/
+consumed 都为 5200384，underruns 0。Codec 元数据启动预滚不阻止普通核心声道播放；
+六种空间布局正确报告 1560 个采样所在 AU 尚无完整位置轨迹，其后空间渲染有限且无削波。
+
+字段和统计差异见 [MATRIX_COMPATIBILITY.md](MATRIX_COMPATIBILITY.md)。证据位于
+`Build/OfficialDecoder/`。测试结果仅支持文档所列 48 kHz FBA profile，不声明全部 TrueHD
+格式或 Dolby renderer 的逐位兼容。最后一个 interval 的 PCM checksum 仍无后继字段
+可核验；其 transport CRC/parity 和 metadata authentication 均通过。
+
+本轮 fuzz smoke 完成 188,110 次运行（31 秒），无 ASan/UBSan 报告。
+FFmpeg 16 fixture API cases 与 16 PCM FATE 通过，另对官方 DME-16 全片验证
+PCM/PTS/trim/target/motion metadata、随机访问、保留帧寿命和错误路径。
+旧 July 文件在严格模式仍于 AU 372 检出 expected 63 / actual e4，未将兼容修复
+变为绕过 PCM 校验。最终结构化记录见本机 `Build/OfficialDecoder/validation.json`。
+
+## Windows DEE under Wine — 2026-10-07
+
+用用户提供的 DEE 5.2.1 和应用内 Wine 10.13，重新编码同一 IAB 为 16 elements，
+89,258,394 bytes、130,000 AUs、5,200,000 samples。Windows 与 native 官方编码器都使用
+7–16 行 extended matrices、variable precision/shift、dither/bypass、delta interpolation
+和 FIR/IIR；不是 Swift 固定子集的同义表示。两次官方预处理输出也并非 PCM-identical。
+
+Decoder 1.4.1 修复 zero-trim EOS，保留 40 个末 AU 采样并识别真正终止。
+4,472 次严格 PCM checksum 全通过，四层共 166,400,000 通道采样与该流的 FFmpeg/DRP
+参考完全一致；未进行数值拟合或修正。CoreAudio gain-zero decoded/submitted/consumed
+均为 5,200,000，underruns 0。8/8 CTest、8/8 ASan/UBSan 及全片严格 sanitizer 解码通过，
+Xcode 双架构、Windows/Linux 交叉构建成功。Swift Encoder 及其 CLI 源码和 Xcode 工程未修改。
+MinGW Windows DLL/CLI 补齐该工具链的标准运行库后，在同一 Wine 下完成全片
+严格解码，130,000 AUs、5,200,000 samples、checksum mismatches 0；8 项测试及四层
+全片逐样本参考对照、随机访问 PCM 一致性、九种布局渲染均通过。此项没有测试
+Windows 物理音频设备。
+详见本机 `Build/WineDEEChecksum/README.md`；永久语法对比见 MATRIX_COMPATIBILITY.md。
+
+### Three-source release check
+
+Decoder 1.4.1 completed full strict decoding of the following fresh NaturesFury
+streams. This records tested inputs rather than universal MLP/TrueHD support.
+
+| Encoding source | Elements | AUs | Samples | PCM checksum mismatches |
+|---|---:|---:|---:|---:|
+| Current Swift Encoder | 16 | 130,000 | 5,200,000 | 0 |
+| Native DME / DEE 6.5.4 | 16 | 130,010 | 5,200,384 | 0 |
+| Windows DEE 5.2.1 through Wine | 16 | 130,000 | 5,200,000 | 0 |
+
+Native DME 12/14-element streams also passed full strict checks. The official
+16-element streams matched their own FFmpeg 2/6/8-channel and DRP element PCM
+references sample for sample. The current Encoder's earlier interval checks
+also passed; encoding-stage spatial reduction remains outside compression
+losslessness. The older July file still fails strict PCM checks at AU 372;
+it is not treated as a clean stream by this release.

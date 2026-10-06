@@ -301,6 +301,18 @@ independent of the source code license.
 
 ## License
 
-Copyright © 2026 B00kerLouis. Licensed under the GNU Affero General Public
-License v3.0 only (`AGPL-3.0-only`). See [LICENSE](LICENSE). Relevant upstream
-attributions are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Copyright © 2026 B00kerLouis. Encoder and Decoder have separate licenses:
+
+- **Decoder:** `LGPL-2.1-or-later`, matching FFmpeg's default license. This covers
+  the independent C/C++ framework, CLI, Decoder tests and documentation. See
+  [LICENSE](LICENSE) and [the LGPL text](LICENSES/LGPL-2.1-or-later.txt).
+- **Encoder:** [Swift TrueHD Encoder Research License](LICENSES/LicenseRef-Swift-TrueHD-Research.txt)
+  (`LicenseRef-Swift-TrueHD-Research`). Downstream use is limited to noncommercial
+  encoding research with the Swift implementation. Commercial use, reverse
+  engineering and non-Swift ports require separate written authorization,
+  subject to the exceptions in that license. The restrictions do not limit the
+  rights holder's own use. This is a source-available research license.
+
+Encoder restrictions do not apply to the LGPL Decoder. Relevant upstream
+references and third-party boundaries are recorded in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

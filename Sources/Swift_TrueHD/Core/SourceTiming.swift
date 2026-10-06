@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Resolves source frame-rate and timecode metadata into one validated output
 // timeline shared by the elementary stream and companion records.

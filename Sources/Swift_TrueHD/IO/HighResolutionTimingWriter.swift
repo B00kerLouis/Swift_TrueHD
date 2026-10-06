@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Serializes high-resolution timing metadata from the resolved source timeline
 // without altering or trimming the corresponding PCM sample sequence.

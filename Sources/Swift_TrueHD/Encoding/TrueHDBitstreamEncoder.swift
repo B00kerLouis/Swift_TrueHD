@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Swift-TrueHD-Research
 //
 // Lossless 7.1 encoder using cumulative 2-, 6-, and 8-channel substreams with
 // shared prediction, entropy selection, restart state, and DRC metadata.
