@@ -1,105 +1,128 @@
-# 独立 Decoder 的 FFmpeg 接入与修复记录
+# Independent Decoder integration with FFmpeg
 
-日期：2026-10-06。范围为 Decoder 和独立 FFmpeg 适配层。按项目范围，48 kHz
-FBA profile 与现有渲染/播放架构保留；本轮接通移动 OAMD 和 PCM 校验报告。Encoder 的
-实现和既有用户改动保留；许可采用 Encoder 研究许可与 Decoder LGPL 的拆分。
+Date: 2026-10-06. Scope: the Decoder and its independent FFmpeg adapter.
+The 48 kHz FBA profile and existing rendering/playback architecture are
+preserved. Moving OAMD and PCM checksum reporting are implemented. Encoder
+implementation and existing user changes are retained; licensing is split
+between the Encoder research license and Decoder LGPL.
 
-## 已完成
+## Completed work
 
-| 项目 | 实现与结果 |
+| Area | Implementation and result |
 |---|---|
-| 独立 codec 接入 | `Integrations/FFmpeg/libtruehdddec.c` 注册 `libtruehdd`，使用 `AV_CODEC_ID_TRUEHD`，保留原 `mlpdec.c` |
-| 构建注册 | 外部库探测、codec/Makefile 注册、版本、Changelog、文档、FATE 定义和可重复安装脚本 |
-| Xcode 兼容 | 原 `decoder_framework -> decoder_cli` 图、macOS 11+、arm64/x86_64 保留；适配层只在 FFmpeg 内编译 |
-| 随机访问 checksum | reset 后不核验无法取得的前一区间 PCM checksum；当前 restart CRC 及后续区间检查继续执行 |
-| major-sync 解析 | 依据扩展标志和数量计算实际头长度；验证 channel arrangement、modifier、presentation/format flags 与 element count |
-| PCM 交付 | 右对齐 24-bit PCM 转换成满幅 S32；`ff_get_buffer` 分配输出，保留准确 core layout，elements 使用 unspecified layout |
-| 时间与生命周期 | packet PTS、实际样本 duration、最终裁剪、flush/preroll、损坏包恢复、错误码、帧及元数据所有权 |
-| 元数据 | copied frame dictionary 交付 presentation、DRC 有效性/code、OAMD 有效性/坐标/逐采样 motion；不新增 FFmpeg 公共 ABI |
-| 可分发测试 | 四条原创合成音频和一条 timed OAMD 变体、16 个 FATE case；无需 Encoder 运行时即可运行测试 |
-| 深入错误路径 | 修复外层完整性检查的 libFuzzer mutator，结合 AU 序列、状态事务和 PCM 边界检查 |
-| 许可与发行 | LGPL Decoder/适配层、独立下游 Encoder 研究许可；文件头、安装与 CI 产物同步 |
+| Independent codec | `Integrations/FFmpeg/libtruehdddec.c` registers `libtruehdd` with `AV_CODEC_ID_TRUEHD`, preserving `mlpdec.c` |
+| Build registration | External-library discovery, codec/Makefile registration, version, Changelog, documentation, FATE definitions and a repeatable installer |
+| Xcode compatibility | Existing `decoder_framework -> decoder_cli` graph, macOS 11+, arm64/x86_64; adapter compiled only inside FFmpeg |
+| Random-access checksums | Reset skips the unavailable preceding interval checksum; current restart CRC and subsequent interval checks remain enabled |
+| Major-sync parsing | Actual header length follows extension flags/counts; validates channel arrangements, modifiers, presentation/format flags and element counts |
+| PCM delivery | Right-aligned 24-bit PCM becomes full-scale S32; `ff_get_buffer` allocates output; exact core layouts and unspecified element layouts |
+| Timing and lifetime | Packet PTS, actual sample duration, final trimming, flush/preroll, corrupt-packet recovery, error codes and frame/metadata ownership |
+| Metadata | Copied frame dictionary carries presentation, DRC validity/codes, OAMD validity/coordinates and sample-aligned motion; no new FFmpeg public ABI |
+| Redistributable tests | Four original synthetic streams and one timed OAMD variant; 16 FATE cases without an Encoder runtime |
+| Error-path coverage | libFuzzer mutator repairs outer integrity checks and exercises AU sequences, transactional state and PCM bounds |
+| Licensing and distribution | LGPL Decoder/adapter and separate downstream Encoder research license; file headers, installation and CI products updated |
 
-## 随机访问中的继承元数据
+## Inherited metadata during random access
 
-`Sources/DecoderFramework/Decoder.cpp` 在 reset 后接受有效中途 major-sync AU。
-完整音频流与每个 major sync 处重新开始的解码得到相同 PCM。
+`Sources/DecoderFramework/Decoder.cpp` accepts valid middle-of-stream
+major-sync AUs after reset. Continuous decoding and restarting at each major
+sync produce identical PCM.
 
-Major sync 不一定重发 OAMD 或 DRC 更新，因此它们不能由通道数或默认 unity
-值代替。元素 PCM 继续输出，`positions_valid=0`，直到 OAMD 到达。
-`sthd_decoder_drc_valid` 返回逐 presentation 的已接收 DRC 标志；它是 Decoder
-1.2.0 的新增 C 函数，保留既有 Frame 布局和 ABI v3。失败不改变有效性状态。
-FFmpeg 元数据以有效性标记表示缺失，未取得的坐标/gain-code tag 不输出。
-项目内位置视图和渲染仍要求有效坐标。
+Major sync does not necessarily repeat OAMD or DRC updates. Neither can be
+inferred from channel counts or default unity values. Element PCM remains
+available with `positions_valid=0` until OAMD arrives.
+`sthd_decoder_drc_valid`, added in Decoder 1.2.0, returns per-presentation
+received-code flags while preserving the existing Frame layout and C ABI v3.
+Failures do not change validity. FFmpeg metadata marks missing values
+unavailable and omits unknown coordinate/gain-code tags. Position views and
+rendering still require valid coordinates.
 
-位置及代码：`Sources/DecoderFramework/Decoder.cpp` 的 `restart`、`major_sync`、
-`sthd_decoder_drc_valid`；公开约定见 `include/TrueHDDecoder.h` 和
-[PLAY_API.md](PLAY_API.md)。
+Relevant implementation: `restart`, `major_sync` and `sthd_decoder_drc_valid`
+in `Sources/DecoderFramework/Decoder.cpp`. Public contracts are in
+`include/TrueHDDecoder.h` and [PLAY_API.md](PLAY_API.md).
 
-## 1.2 适配层的先前本机验证
+## Earlier local validation of the 1.2 adapter
 
-- Xcode 26.3：decoder_cli Release 和 decoder_framework Debug 构建成功，两种
-  产品均保留 arm64/x86_64；没有改变 Xcode 工程或 Encoder target 设置。
-- Apple Clang 17 CMake Release：CTest 5/5，包含真实压缩的 7.1、12/14/16 元素
-  fixture；通过损坏输入、头部组合、事务、随机访问和九布局测试。
-- FFmpeg revision `2da55bf59a68801a8157ab141a487196ce3416a8`：最小构建启用独立
-  `libtruehdd`，所有 15 个 PCM FATE 结果与 Swift 编码前参考哈希一致。
-- 该 FFmpeg 配置 `make fate`：317/317 通过。补充了上游官方 1,301-byte MOV
-  边界样本，未修改其测试或参考结果；不是所有 FFmpeg codec 的完整配置。
-- 15 个 API case：逐样本 S32/PCM、两个独立实例、任意初始 PTS、flush、最终
-  sample count/duration、OAMD 延迟及恢复、DRC 有效性、metadata off、损坏包/
-  缺失 presentation 错误、preroll 和保留帧在 close 后的寿命均通过。
-- 对 Decoder core 和适配 C 文件启用 ASan/UBSan，同样 15 个 API case 与编码前
-  packed PCM 逐样本比对通过；Decoder sanitizer CTest 5/5。
-- LLVM 23 libFuzzer 最终 47,521 次运行，coverage counter 1,767，未报告
-  ASan/UBSan 错误。此为有界 smoke 验证，不声称穷尽所有损坏状态。
-- 适配 C 文件及 API 测试以 `-Wall -Wextra -Werror` 编译通过。
-- 安装脚本在干净的固定上游 checkout 应用及重复运行通过；不覆盖不同的已有
-  adapter 文件。`mlpdec.c` 内容不变。
+- Xcode 26.3: decoder_cli Release and decoder_framework Debug builds pass;
+  both products retain arm64/x86_64. Xcode project and Encoder target settings
+  are unchanged.
+- Apple Clang 17 CMake Release: CTest 5/5, including compressed 7.1 and
+  12/14/16-element fixtures, corrupt input, header combinations, transactional
+  failures, random access and nine layouts.
+- FFmpeg revision `2da55bf59a68801a8157ab141a487196ce3416a8`: the minimal
+  configuration enables independent `libtruehdd`; all 15 PCM FATE results
+  match Swift pre-entropy reference hashes.
+- Configured FFmpeg `make fate`: 317/317 pass. The upstream 1,301-byte MOV
+  boundary sample was added without changing its test/reference. This is not
+  a full configuration of every FFmpeg codec.
+- Fifteen API cases pass: sample-aligned S32/PCM, two independent instances,
+  arbitrary initial PTS, flush, final sample count/duration, OAMD delay and
+  recovery, DRC validity, metadata disabled, corrupt packets, missing
+  presentations, preroll and retained frame lifetime after close.
+- Decoder core and adapter C source with ASan/UBSan: the same 15 API cases
+  match packed pre-entropy PCM sample for sample; Decoder sanitizer CTest 5/5.
+- LLVM 23 libFuzzer: 47,521 runs, coverage counter 1,767, no ASan/UBSan
+  errors. This bounded smoke check does not exhaust all malformed states.
+- Adapter C source and API tests compile with `-Wall -Wextra -Werror`.
+- Installer succeeds on a clean pinned upstream checkout and on repeat
+  invocation. Differing existing adapter files are not overwritten;
+  `mlpdec.c` is unchanged.
 
-证据保留在忽略目录 `Build/FFmpegAdapter/`：`fate-all-final.log`、
-`adapter-checks.log`、`api-sanitized.log`、`fuzz-final.log`、Xcode final build logs
-及 CMake `Testing/Temporary/LastTest.log`。合成码流、参考来源和 SHA/MD5 在
-[fixtures/references.json](../Integrations/FFmpeg/fixtures/references.json)。
+Evidence is retained in ignored `Build/FFmpegAdapter/`: `fate-all-final.log`,
+`adapter-checks.log`, `api-sanitized.log`, `fuzz-final.log`, final Xcode build
+logs and CMake `Testing/Temporary/LastTest.log`. Synthetic stream and PCM
+reference origins and SHA/MD5 are in
+[fixtures/references.json](../Integrations/FFmpeg/fixtures/references.json).
 
-## 后续边界
+## Submission boundaries
 
-本轮没有创建或提交 FFmpeg PR。注册补丁针对固定上游 revision；提交时应更新到
-当时 master、检查上下文并依照上游评审修改。macOS/Linux adapter CI 和 Linux
-fuzz smoke 已加入项目 workflow；本机未执行 Windows/Linux 的新 CI job。
+No FFmpeg PR was created or submitted. The registration patch targets a
+pinned upstream revision. Submission requires updating to the then-current
+master, checking context and addressing upstream review. macOS/Linux adapter
+CI and Linux fuzz smoke are part of the workflow; the original local review
+did not run the new Windows/Linux CI jobs.
 
-采样率 profile 保持 48 kHz，renderer/native playback 已接入逐采样 motion。程序级记录保留在
-[VALIDATION.md](VALIDATION.md)。接入和复现步骤见
-[Integrations/FFmpeg](../Integrations/FFmpeg/README.md)。
+The sample-rate profile remains 48 kHz. Rendering and native playback consume
+sample-aligned motion. Programme-level records are in
+[VALIDATION.md](VALIDATION.md); integration and reproduction instructions
+are in [Integrations/FFmpeg](../Integrations/FFmpeg/README.md).
 
-官方规则与基础接口：[开发规范](https://ffmpeg.org/developer.html)、
-[FATE](https://ffmpeg.org/fate.html)、
-[FFCodec](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/codec_internal.h)。
+Primary rules and interfaces:
+[development guidelines](https://ffmpeg.org/developer.html),
+[FATE](https://ffmpeg.org/fate.html),
+[FFCodec](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/codec_internal.h).
 
 ### Decoder 1.3 follow-up
 
-适配层现在传递 sample-aligned OAMD motion，通过有界 float32 LE/base64 dictionary
-保留精确轨迹，并标注量化的坐标快照。PCM checksum 默认 warning + corrupt-frame flag，
-`AV_EF_EXPLODE` 选择事务性拒绝。Pkg-config 最低版本 1.3.0；C ABI v3 frame 不变。
-新增 timed fixture，16 API cases 与 16 PCM FATE 通过，给定外部 MLP 的全文件 elements
-PCM 与直接 CLI 的 MD5 一致。Xcode 构建与 encoder 源文件保持兼容。
+The adapter delivers sample-aligned OAMD motion through a bounded float32
+LE/base64 dictionary and marks quantized coordinate snapshots. PCM checksum
+mismatches produce warnings and corrupt-frame flags; `AV_EF_EXPLODE` selects
+transactional rejection. The minimum pkg-config version at this stage is
+1.3.0, with C ABI v3 frames unchanged. The timed fixture, 16 API cases and
+16 PCM FATE cases pass. Complete element PCM from the supplied external MLP
+matches the direct CLI MD5. Xcode and Encoder source compatibility is retained.
 
-当前完整外部文件的 adapter API 验证也通过：130,000 AUs、5,200,000 samples、
-1,049 个 major sync，覆盖 PCM、PTS、trim、逐采样 motion dictionary、随机访问、
-保留帧寿命和错误处理；96 个 mismatch 的 AVFrame corrupt 标记与 C API 证据一致。
-严格 FFmpeg `-xerror -err_detect explode` 在 AU 372 正确终止。
+The complete supplied-file adapter API check also passes: 130,000 AUs,
+5,200,000 samples and 1,049 major syncs, covering PCM, PTS, trim, motion
+metadata, random access, retained frame lifetime and errors. Its 96 mismatch
+AVFrame corrupt flags agree with C API evidence. Strict FFmpeg
+`-xerror -err_detect explode` correctly stops at AU 372.
 
 ### Decoder 1.4 official matrix follow-up
 
-已接通 DME primitive/extended matrix、shift、dither、bypass、delta interpolation、
-quantization、FIR/IIR state 和相关 guard/DRC/ramp 字段。Pkg-config 最低版本现为 1.4.0，
-C ABI v3 Frame 不变。FFmpeg 复制 incoming target metadata，startup/seek 的未知 ramp
-起点不标为有效坐标。矩阵字段、差异和完整程序验证见
-[MATRIX_COMPATIBILITY.md](MATRIX_COMPATIBILITY.md)。没有修改或整合 mlpdec。
+DME primitive/extended matrices, shifts, dither, bypass, delta interpolation,
+quantization, FIR/IIR state and related guard/DRC/ramp fields are supported.
+The minimum pkg-config version at this stage is 1.4.0; C ABI v3 Frame remains
+unchanged. FFmpeg copies incoming target metadata without marking unknown
+startup/seek ramp origins valid. Fields, differences and full-programme
+validation are in [MATRIX_COMPATIBILITY.md](MATRIX_COMPATIBILITY.md).
+There are no modifications to or integration into mlpdec.
 
 ### Decoder 1.4.1 termination follow-up
 
-Windows DEE 5.2.1 的完整流使用 `D234 E000` 零裁剪结束标记。Decoder 将 EOS
-与采样裁剪分别跟踪，保留最后 40 个有效采样；reset 清除 EOS，标记之后的数据
-事务性拒绝。Pkg-config 最低版本为 1.4.1。16 个 fixture API case、16 个 PCM
-FATE 和该完整官方流的 PCM/API 对照通过，未修改 mlpdec。
+The Windows DEE 5.2.1 programme uses the `D234 E000` zero-trim terminator.
+The Decoder tracks EOS independently of trimming, retains the final 40 valid
+samples, clears EOS on reset and transactionally rejects following data.
+The minimum pkg-config version is 1.4.1. Sixteen fixture API cases, 16 PCM
+FATE cases and the official programme's PCM/API comparison pass; mlpdec
+remains unchanged.

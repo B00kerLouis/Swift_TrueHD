@@ -1,14 +1,30 @@
 # TrueHD Decoder
 
-该项目新增两个独立 Xcode Target：`decoder_framework`（`libtruehdd.framework` 静态 Framework）和 `decoder_cli`（`truehdd`）。所有解码、校验、空间渲染、设备探测和 CLI 实现仅使用 C/C++，不链接 Swift encoder、FFmpeg 或外部解码器。原有源文件、测试、README 和已有 Scheme 保持本次工作开始时的内容。
+The project provides two independent Xcode targets: `decoder_framework`
+(the static `libtruehdd.framework`) and `decoder_cli` (`truehdd`). Decoding,
+integrity checks, spatial rendering, device discovery and CLI implementation
+use only C/C++. Decoder products do not link the Swift Encoder, FFmpeg or an
+external decoder. Existing Encoder sources, tests and schemes are preserved.
 
-本 decoder 支持当前项目生成的 48 kHz TrueHD FBA elementary stream：普通 2/6/8 层和 Atmos 2/6/8/12、14、16 层。MXF 是 encoder 输入；decoder 输入是 encoder 输出的 `.mlp`。目前不包含 MXF/MKV demux、TrueHD/MLP 全格式解码或动态 DRC 播放处理；不支持的语法明确报错。
+The Decoder supports the tested 48 kHz TrueHD FBA elementary-stream profile:
+plain 2/6/8 layers and Atmos 2/6/8/12, 14 or 16 layers. MXF is Encoder input;
+Decoder input is the resulting `.mlp` elementary stream. MXF/MKV demuxing,
+universal TrueHD/MLP syntax coverage and dynamic DRC playback are outside the
+implemented scope. Unsupported syntax fails explicitly.
 
 ## License and FFmpeg submission review
 
-Decoder Framework、CLI、测试、FFmpeg 适配层和文档使用 `LGPL-2.1-or-later`，与 FFmpeg 默认许可一致；完整文本见 [LGPL](../LICENSES/LGPL-2.1-or-later.txt)，范围见 [LICENSE](../LICENSE)。Encoder 的研究用途、商业使用、逆向和非 Swift 移植限制不适用于 Decoder。
+The Decoder framework, CLI, tests, FFmpeg adapter and documentation use
+`LGPL-2.1-or-later`, matching FFmpeg's default license. See the
+[LGPL text](../LICENSES/LGPL-2.1-or-later.txt) and component scope in
+[LICENSE](../LICENSE). Encoder research, commercial-use, reverse-engineering
+and non-Swift port restrictions do not apply to the Decoder.
 
-独立 Decoder 的 FFmpeg 适配层、构建和测试见 [Integrations/FFmpeg](../Integrations/FFmpeg/README.md)，修复及验证状态见 [FFMPEG_REVIEW.md](FFMPEG_REVIEW.md)。通过 `-c:a libtruehdd` 显式选择独立实现，不修改 FFmpeg 的 `mlpdec`；Xcode Framework/CLI 保持原构建图。
+The independent adapter, build and tests are documented in
+[Integrations/FFmpeg](../Integrations/FFmpeg/README.md); implementation and
+validation records are in [FFMPEG_REVIEW.md](FFMPEG_REVIEW.md). Select it
+explicitly with `-c:a libtruehdd`. It does not modify FFmpeg's `mlpdec`, and
+the Xcode framework/CLI retain their existing build graph.
 
 ## macOS / Xcode
 
@@ -19,7 +35,11 @@ xcodebuild -project Swift_TrueHD.xcodeproj -scheme decoder_cli \
   CONFIGURATION_BUILD_DIR="$PWD/Build/Products/Release" build
 ```
 
-打开同一个 `.xcodeproj` 即可选择 `decoder_cli` 或 `decoder_framework` Scheme。两个 Target 均独立于 `libtruehda` 和 `turehda`，CLI 仅依赖 decoder Framework 和系统音频库。验证工具链为 Xcode 26.3，decoder 的 macOS deployment target 为 11.0；Release 产物为 arm64/x86_64 通用二进制。
+Open the same `.xcodeproj` and choose `decoder_cli` or `decoder_framework`.
+Both targets are independent of `libtruehda` and `turehda`. The CLI depends
+only on the Decoder framework and system audio libraries. Xcode 26.3 is the
+tested toolchain; the Decoder deployment target is macOS 11.0. Release
+products are universal arm64/x86_64 binaries.
 
 ```sh
 Build/Products/Release/truehdd -i INPUT.mlp -o OUTPUT.wav --layout 7.1.4
@@ -28,19 +48,46 @@ Build/Products/Release/truehdd -i INPUT.mlp -o ELEMENTS.wav --presentation eleme
 Build/Products/Release/truehdd --device-info
 ```
 
-完整布局：`2.0`、`5.1`、`7.1`、`5.1.2`、`5.1.4`、`7.1.2`、`7.1.4`、`7.1.6`、`9.1.6`。5.1 系列也接受 `5.1(back)`、`5.1.2(back)`、`5.1.4(back)`，用于实际以 BL/BR 标记环绕对的设备。默认 `--layout auto` 读取默认设备的实际扬声器标签；不根据通道数量猜测高度或扬声器位置。若驱动只有 Unknown/Discrete 标签，应显式指定布局；两通道 CoreAudio 设备若明确提供 preferred stereo channel pair，可自动映射 L/R，含反转的物理顺序。`--speaker-order FL,FR,...` 可以指定与所选布局相同的一组扬声器的实际物理顺序。可选 `--gain-db -6` 为渲染求和保留余量，CLI 报告量化到 24-bit 时的削波采样数。
+Supported layouts are `2.0`, `5.1`, `7.1`, `5.1.2`, `5.1.4`, `7.1.2`,
+`7.1.4`, `7.1.6` and `9.1.6`. The 5.1 family also accepts `5.1(back)`,
+`5.1.2(back)` and `5.1.4(back)` for devices labelling their surround pair
+BL/BR. Default `--layout auto` reads actual default-device speaker labels;
+channel counts do not imply height or speaker positions. Unknown/Discrete
+labels require an explicit layout. A two-channel CoreAudio endpoint with an
+explicit preferred stereo-channel pair can map L/R automatically, including
+reversed physical order. `--speaker-order FL,FR,...` supplies physical order
+for the same speaker set as the chosen layout. Optional `--gain-db -6`
+provides render headroom; the CLI reports samples clipped during 24-bit
+quantization.
 
-`--presentation 2|6|8|elements` 提取相应呈现的原始 24-bit PCM，与布局渲染、声道重排和增益选项互斥。DRC gain code 由 Framework 返回，默认保留无 DRC 的无损 PCM。
+`--presentation 2|6|8|elements` extracts the corresponding raw 24-bit PCM
+presentation and is mutually exclusive with layout rendering, channel
+reordering and gain options. The framework returns DRC gain codes but keeps
+lossless PCM without applying DRC by default.
 
-输出为 48 kHz / 24-bit WAVE，超过 RIFF 长度范围自动使用 RF64。每个输出附带 `.channels.json`，记录准确的声道顺序；元素提取还记录 OAMD 坐标。WAVE 标准没有可移植的 Top Middle / Front Wide 位定义，含这些声道的输出使用零 channel mask，必须依照 sidecar 配置播放器，不能按一般的 16-channel WAVE 默认顺序解释。设备顺序与 WAVE mask 顺序不一致时同样使用 sidecar。
+Output is 48 kHz / 24-bit WAVE, switching to RF64 when RIFF length limits are
+exceeded. Each output has a `.channels.json` sidecar with exact channel order;
+element extraction also records OAMD coordinates. WAVE has no portable Top
+Middle / Front Wide mask bits, so layouts containing these speakers use a
+zero channel mask and require sidecar-aware playback configuration. They
+must not be interpreted as a conventional 16-channel WAVE layout. Device
+orders that differ from WAVE mask order also require the sidecar.
 
-元素 sidecar 流式记录已获得的 OAMD target、时间与 ramp，输出完成时写入最后采样的坐标快照和 dynamic 标记。随机访问后若整个片段都未收到 OAMD，`positionsValid=false` 且省略坐标和 LFE/object 标签；PCM 元素及其顺序仍保留，不将初始化的零数组当作真实位置。
+Element sidecars stream received OAMD targets, sample times and ramps. On
+completion they append the final sample's position snapshot and dynamic flag.
+If an entire random-access segment receives no OAMD, `positionsValid=false`
+and coordinates and LFE/object labels are omitted. Element PCM and order are
+retained; initialized zero arrays are not presented as real coordinates.
 
-CLI 支持 `--format s24le` 输出无头 packed PCM，支持 `--play` 使用独立的 native backend 实际播放。CoreAudio、WASAPI/Windows Spatial Audio、PipeWire 分别处理系统协商和调度；普通 Windows PCM 不进入 Spatial pipeline。详见 [原生音频架构](AUDIO_ARCHITECTURE.md)。
+`--format s24le` writes headerless packed PCM. `--play` uses the independent
+native backend. CoreAudio, WASAPI/Windows Spatial Audio and PipeWire handle
+system negotiation and scheduling; ordinary Windows PCM does not enter the
+Spatial pipeline. See [native audio architecture](AUDIO_ARCHITECTURE.md).
 
-## Windows / Linux / C++ builder
+## Windows / Linux / C++ builds
 
-需要 C++17 编译器和 C 编译器。CMake 仅管理新增 decoder，不编译 encoder，也不改变 macOS 的 Xcode 架构。
+A C++17 compiler and a C compiler are required. CMake builds only the
+Decoder, without compiling the Encoder or changing macOS Xcode architecture.
 
 ```sh
 cmake -S . -B Build/DecoderPortable -DCMAKE_BUILD_TYPE=Release
@@ -48,11 +95,30 @@ cmake --build Build/DecoderPortable --config Release
 ctest --test-dir Build/DecoderPortable -C Release --output-on-failure
 ```
 
-Windows 可使用 MSVC 或 MinGW；CLI 使用 Unicode 命令行与路径，设备布局来自 WASAPI shared mix format 的实际 channel mask。MinGW CLI 静态链接自身的编译器运行库；共享 `truehdd.dll` 的 MinGW 运行库依赖仍需随 DLL 部署，本轮构建为 `libstdc++-6.dll`、`libgcc_s_seh-1.dll` 和 `libwinpthread-1.dll`。Windows 的 standard WAVE mask 无法表示完整的 Top Middle / Front Wide，因此这类离散多通道接口应由宿主传入实际 `STHDLayout`，或通过 CLI 显式指定。
+Windows supports MSVC or MinGW. The CLI uses Unicode command lines and paths;
+WASAPI shared mix-format channel masks determine device layouts. The MinGW CLI
+statically links its own compiler runtime. The shared `truehdd.dll` still
+requires its MinGW runtime dependencies alongside the DLL: in the tested
+build these are `libstdc++-6.dll`, `libgcc_s_seh-1.dll` and
+`libwinpthread-1.dll`. Standard Windows WAVE masks do not represent every Top
+Middle / Front Wide position. Hosts must supply an actual `STHDLayout`, or
+users must select an explicit CLI layout for such discrete interfaces.
 
-Linux 在找到 `libpipewire-0.3` 开发包时优先编译 PipeWire capability/playback；默认 sink 的实际 profile 和 positions 决定布局。无 PipeWire 时仍可离线 decode/render，旧 ALSA 查询可作为兼容查询路径。未知或离散通道需要显式布局，实时 player 需要 PipeWire。可用 `-DSTHD_NATIVE_DEVICE=OFF` 构建完全不依赖平台音频 API 的核心。
+Linux builds PipeWire capability discovery/playback when the
+`libpipewire-0.3` development package is found. Active default-sink profiles
+and positions determine the layout. Without PipeWire, offline decoding and
+rendering remain available; legacy ALSA discovery can provide a compatibility
+query path. Unknown/discrete channels require an explicit layout. Real-time
+playback requires PipeWire. `-DSTHD_NATIVE_DEVICE=OFF` builds a core without
+platform audio API dependencies.
 
-不使用 CMake 时，将 `Sources/DecoderFramework` 的七个 `.cpp` 编译为库，公开 `include/TrueHDDecoder.h`，再链接 `Sources/DecoderCLI/main.cpp`。macOS 链接 CoreAudio/AudioToolbox；Windows 链接 ole32/uuid，MinGW Unicode 入口需要 `-municode`；Linux 的 ALSA 探测需定义 `STHD_HAVE_ALSA=1` 并链接 asound；PipeWire 实时路径定义 `STHD_HAVE_PIPEWIRE=1` 并使用 pkg-config 的 `libpipewire-0.3` 编译/链接参数。C++ 代码需启用异常，异常不会穿过公开 C ABI。
+Without CMake, compile the seven `.cpp` files in `Sources/DecoderFramework`
+into a library, expose `include/TrueHDDecoder.h`, and link
+`Sources/DecoderCLI/main.cpp`. Link CoreAudio/AudioToolbox on macOS and
+ole32/uuid on Windows; the MinGW Unicode entry point needs `-municode`.
+Linux ALSA discovery requires `STHD_HAVE_ALSA=1` and asound; PipeWire playback
+requires `STHD_HAVE_PIPEWIRE=1` and pkg-config flags for `libpipewire-0.3`.
+C++ exceptions must be enabled, but never cross the public C ABI.
 
 ## C ABI
 
@@ -73,36 +139,63 @@ if (decoder && sthd_layout_named("7.1.4", &output) == STHD_OK) {
 sthd_decoder_destroy(decoder);
 ```
 
-一个 decoder 对应一条流，调用者串行访问该实例。首个 AU 必须带 major sync；输入错误不提交新的解码状态、不修改输出 frame。Framework 每次处理一个最多 8190-byte AU 和 40 个采样，不加载整部素材。渲染 float PCM 允许超过 ±1；宿主决定量化、限幅和音量。CLI 拒绝覆盖已有输出和 sidecar，普通失败及 SIGINT/SIGTERM 取消会清理本次创建的未完成输出。
+Each Decoder instance owns one stream and is serialized by its caller. The
+first AU must contain major sync. Input errors neither commit new decode
+state nor modify the output frame. The framework processes one AU of at most
+8190 bytes and 40 samples at a time, without loading whole programmes.
+Rendered float PCM may exceed +/-1; the host controls quantization, clipping
+and volume. The CLI refuses to overwrite existing outputs or sidecars and
+removes newly created incomplete outputs on normal failure or SIGINT/SIGTERM.
 
-## 已验证范围
+## Validated scope
 
-两个提供的 MXF 都完成全片 encode→decode：TBH 为 11,036,000 个采样，NaturesFury 为 5,200,000 个采样。全部 2/6/8/16 层 PCM 与原 encoder 在熵编码前的参考逐字节一致；NaturesFury 的 2/6/8 层还与 FFmpeg 独立解码一致。另验证全片 12/14 元素、九种布局、脉冲/LFE/前宽/重排、末帧裁剪、损坏流和 ASan/UBSan。
+Both supplied MXFs completed full-programme encode/decode: TBH has 11,036,000
+samples and NaturesFury has 5,200,000. All 2/6/8/16-layer PCM matches the
+original Encoder's pre-entropy reference byte for byte. NaturesFury 2/6/8
+also matches independent FFmpeg decoding. Validation additionally covers
+complete 12/14-element files, nine layouts, impulse/LFE/front-wide/reordering,
+final trimming, corrupt streams and ASan/UBSan.
 
-原 encoder 会将 IAB 对象降维到固定空间锚点。解码器无损恢复的是码流中的编码元素；原始 IAB 全部轨道、对象运动和编码前被丢弃的信息无法从这些元素恢复。本 renderer 是独立的等功率房间坐标渲染实现，未验证与 Dolby 官方 renderer 的逐采样一致性。固定锚点没有前宽位置时，9.1.6 的 Front Wide 会为零，不能将此误称为恢复了原始前宽对象；接口对实际前宽位置的路由已用独立脉冲测试验证。
+The original Encoder reduces IAB objects to fixed spatial anchors. Lossless
+reconstruction applies to encoded elements; original IAB tracks, motion and
+information discarded before coding cannot be recovered. This renderer is
+an independent equal-power room-coordinate implementation, not validated as
+sample-identical to Dolby's renderer. Without front-wide anchors, 9.1.6 Front
+Wide outputs can be zero; this does not recover original front-wide objects.
+Independent impulses verify routing for actual front-wide positions.
 
-详见 [码流分析](BITSTREAM.md) 和 [测试记录](VALIDATION.md)。
+See [bitstream analysis](BITSTREAM.md) and [validation records](VALIDATION.md).
 
-GitHub Actions workflow 为 `.github/workflows/native-build.yml`：macOS 通过 Xcode 构建 encoder 和 decoder；Windows/MSVC 与 Linux/GCC 构建 decoder，并使用 macOS 原 encoder 生成的 fixture 做跨平台 PCM 比对。Linux 另测试所有布局的实际 PipeWire 虚拟 sink 播放。
+`.github/workflows/native-build.yml` builds the Encoder and Decoder with
+Xcode on macOS, and the Decoder with Windows/MSVC and Linux/GCC. A fixture
+from the original macOS Encoder provides cross-platform PCM comparisons.
+Linux also exercises actual PipeWire virtual-sink playback for all layouts.
 
 ## Encoded real-time playback API
 
 C ABI v3 adds `sthd_player_create/feed/finish/cancel/stats/last_frame/destroy` for arbitrary encoded byte chunks. CLI `truehdd play -i INPUT.mlp` and `-i -` use the same session. Windows/Linux CMake products are shared `truehdd.dll` / `libtruehdd.so`, with C-only exported API. See [PLAY_API.md](PLAY_API.md) for lifecycle, backpressure and ownership.
 
-### 移动 OAMD 与 PCM 校验
+### Moving OAMD and PCM checksums
 
-Decoder 1.3 支持当前 metadata 语法的移动坐标、sample offset、block offset 和
-跨 AU 线性 ramp。C ABI v3 frame 保持兼容；motion 查询和渲染 API 提供逐采样坐标。
-元素输出的 `.channels.json` 流式记录目标、采样时刻和 ramp 长度，末尾坐标明确标注
-为最后采样快照。PCM 校验不一致默认报告后继续按传输矩阵解码；
-`--strict-pcm-checksum` 或 `--verify-only` 使其成为事务性失败。
-传输 CRC、parity 和 metadata 认证失败始终拒绝。详见 `PLAY_API.md` 和验证记录。
+Decoder 1.3 supports moving coordinates, sample/block offsets and linear ramps
+across AUs in the admitted metadata syntax. C ABI v3 frames remain compatible;
+motion queries and render APIs provide sample-aligned coordinates. Element
+`.channels.json` sidecars stream targets, sample times and ramp durations, and
+identify ending coordinates as the final-sample snapshot. PCM checksum
+mismatches are reported by default while decoding the transmitted matrix.
+`--strict-pcm-checksum` or `--verify-only` makes them transactional failures.
+Transport CRC, parity and metadata authentication failures always reject
+input. See `PLAY_API.md` and the validation records.
 
 ### Official matrix compatibility (Decoder 1.4)
 
-支持已验证的 DME 6.5.4 48 kHz FBA 矩阵语法：primitive noise columns、extended
-系数精度/移位、dither、bypass LSB、delta interpolation、quantization 和 FIR/IIR state。
-DME 12/14/16 元素全片严格校验通过；16 元素文件的四层 PCM 与 FFmpeg/DRP 逐采样一致。
-两种码流的字段与统计差异见 [MATRIX_COMPATIBILITY.md](MATRIX_COMPATIBILITY.md)。
-启动/seek 的位置渐变若缺少起点，会保留 target 并标记坐标暂不可用；普通核心声道播放
-仍可使用，空间渲染需要 preroll。Encoder 源码和 Xcode 构建图保持不变。
+The tested DME 6.5.4 48 kHz FBA matrix syntax includes primitive noise columns,
+extended coefficient precision/shifts, dither, bypass LSBs, delta
+interpolation, quantization and FIR/IIR state. Complete DME 12/14/16-element
+streams pass strict checks. Four-layer PCM from the 16-element file matches
+FFmpeg/DRP sample for sample. Field and statistical differences are recorded
+in [MATRIX_COMPATIBILITY.md](MATRIX_COMPATIBILITY.md).
+Startup/seek ramps with missing origins retain targets and mark coordinates
+unavailable until determined. Ordinary core-channel playback remains usable;
+positional rendering requires preroll. Encoder sources and the Xcode build
+graph remain unchanged.

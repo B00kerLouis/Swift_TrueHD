@@ -1,36 +1,65 @@
-# 码流分析与 decoder 实现
+# Bitstream analysis and decoder implementation
 
-当前项目输出与 DME 6.5.4 的已验证 48 kHz FBA 语法均有完整文件证据。下文编码流程描述本项目 Encoder；官方码流差异和 Decoder 边界见 MATRIX_COMPATIBILITY.md。未实现的其他语法仍明确拒绝。
+Complete-file evidence covers the project's output and the tested DME 6.5.4
+48 kHz FBA syntax. The encoding pipeline below describes this project's
+Encoder. Official-stream differences and Decoder limits are documented in
+[MATRIX_COMPATIBILITY.md](MATRIX_COMPATIBILITY.md). Unimplemented syntax is
+rejected explicitly.
 
-## 编码流程
+## Encoding pipeline
 
-1. `NativeMasterReader.open` 识别 MXF IAB/DAMF/ADM 或 PCM WAVE。`TrueHDEncoder` 根据 ADM metadata 选择普通 7.1 或 Atmos。
-2. 普通 7.1 输入顺序为 `L R C LFE Lb Rb Ls Rs`，分成三个累积子流：0..1、2..5、6..7。
-3. Atmos `AtmosSpatialCoder.prepareElementCache` 对 IAB 解码、空间锚点归并和 headroom/limiter 进行准备。稳定 basis 为八个地面/LFE 元素加 4/6/8 个高度元素；完整对象音轨不直接逐轨写入 TrueHD。
-4. 每个 40-sample AU 将元素转换为共享 transport basis。前两项包含中心与环绕折叠；后续子流通过各自独立逆矩阵生成 5.1、7.1 和 immersive 元素。第四层矩阵逐行执行，不能先把 7.1 的逆矩阵应用到共享 PCM，再复用那份结果。
-5. 每个 restart AU 的第一块是 8 个原始采样，为后续 FIR 提供种子；第二块为 32 个采样，其后 AU 通常为 40 个采样。FIR 固定阶和 LPC 分析最终都写成量化的 FIR 系数。三本固定 MLP Huffman codebook 和有符号 15-bit offset 由实际码率成本选择，offset 和滤波参数在 AU 之间继承。
-6. OAMD 携带固定空间位置；原始对象运动已在 encoder 的 PCM panning 中表达。Evolution 的 HMAC 覆盖整个 AU prefix 与清零认证字段后的 canonical frame。transport rewriter 最后重写 input timing 和 peak rate，并重新认证。
+1. `NativeMasterReader.open` identifies MXF IAB, DAMF, ADM or PCM WAVE input.
+   `TrueHDEncoder` selects plain 7.1 or Atmos from the ADM metadata.
+2. Plain 7.1 input uses `L R C LFE Lb Rb Ls Rs` order and three cumulative
+   substreams carrying channels 0..1, 2..5 and 6..7.
+3. For Atmos, `AtmosSpatialCoder.prepareElementCache` prepares IAB decoding,
+   spatial anchor reduction and headroom/limiting. The stable basis consists
+   of eight ground/LFE elements and 4/6/8 height elements. Complete object
+   tracks are not written individually into TrueHD.
+4. Each 40-sample AU transforms elements into a shared transport basis. The
+   first two values include center and surround folding. Subsequent substreams
+   use their own inverse matrices to produce 5.1, 7.1 and immersive elements.
+   The fourth-layer matrix executes row by row; it cannot reuse transport PCM
+   that has already passed through the 7.1 inverse matrix.
+5. The first block of each restart AU contains eight raw samples that seed the
+   FIR filter, followed by a 32-sample block. Subsequent AUs normally contain
+   40 samples. Fixed-order FIR and LPC analysis both produce quantized FIR
+   coefficients. Actual coding cost selects among three fixed MLP Huffman
+   codebooks and signed 15-bit offsets. Offsets and filter parameters persist
+   between AUs.
+6. OAMD carries fixed spatial positions; the Encoder's PCM panning already
+   represents original object motion. The Evolution HMAC covers the complete
+   AU prefix and the canonical frame with authentication fields cleared.
+   The transport rewriter updates input timing and peak rate, then renews
+   authentication.
 
-## AU 容器
+## AU container
 
-| 位置 | 长度 | 含义 |
+| Position | Length | Meaning |
 |---|---:|---|
-| byte 0..1 | 16 bit BE | 高 4 bit 为 header parity，低 12 bit 为 AU 总长度（16-bit word） |
-| byte 2..3 | 16 bit BE | `input_timing`，decoder 缓冲输入调度，不是固定 PCM 播放 PTS |
-| byte 4 | 28 或 32 byte，可选 | `F8 72 6F BA` major sync，48 kHz FBA；普通三层或 Atmos 四层 |
-| major sync + 16 | 4 bit | 累积子流数（整体 AU byte 20 的高半字节） |
-| major sync 最后两字节 | LE16 | MLP checksum16 |
-| major sync 之后 | 每层 2 或 4 byte | 子流 directory；低 12 bit 为累计结束位置（word），bit 15 表示 DRC extra word |
-| directory 之后 | 变长 | 累积音频子流，均有 parity 与 checksum8 |
-| 最后音频子流之后 | 可选变长 | 受保护 Evolution/OAMD wrapper |
+| Bytes 0..1 | 16-bit BE | High four bits: header parity; low 12 bits: total AU length in 16-bit words |
+| Bytes 2..3 | 16-bit BE | `input_timing`: buffered input scheduling, not fixed PCM playback PTS |
+| Byte 4 | Optional 28 or 32 bytes | `F8 72 6F BA` major sync, 48 kHz FBA; three plain layers or four Atmos layers |
+| Major sync + 16 | 4 bits | Cumulative substream count; high nibble of AU byte 20 |
+| Final two major-sync bytes | LE16 | MLP checksum16 |
+| After major sync | 2 or 4 bytes per layer | Substream directory; low 12 bits: cumulative end position in words; bit 15: DRC extra word |
+| After directory | Variable | Cumulative audio substreams, each with parity and checksum8 |
+| After final audio substream | Optional, variable | Protected Evolution/OAMD wrapper |
 
-AU 总长度最多 8190 byte，48 kHz 下通常代表 40 个采样，最后一帧可裁剪。DRC extra word 的高 9 bit 为有符号 gain code，其后 3 bit 为插值时间 code（0..7），最后 4 bit 为保留位。decoder 返回 gain code，保持默认无 DRC 的 PCM。
+An AU is at most 8190 bytes and normally represents 40 samples at 48 kHz.
+The final frame may be shortened. The DRC extra word contains a signed
+nine-bit gain code, a three-bit interpolation-time code (0..7), and four
+reserved bits. The Decoder returns the gain code and preserves PCM without
+applying DRC by default.
 
-## 子流与预测
+## Substreams and prediction
 
-每块首先读取 parameter-present 和 restart-present。restart 类型为 `0x31EA`（stereo）、`0x31EB`（six/eight）或 `0x31EC`（immersive）。restart 包括 channel 范围、generator seed、先前 interval 的 PCM lossless checksum、`ch_assign` 和 restart CRC。
+Each block starts with parameter-present and restart-present flags. Restart
+types are `0x31EA` (stereo), `0x31EB` (six/eight channels) and `0x31EC`
+(immersive). A restart includes channel ranges, the generator seed, the
+preceding interval's PCM lossless checksum, `ch_assign` and restart CRC.
 
-Huffman 的还原为：
+Huffman reconstruction is:
 
 ```text
 lsb_bits = huff_lsbs - quantizer_step
@@ -44,19 +73,41 @@ sample = quantized(wrap32(residual + prediction))
 IIR_history = wrap32(sample - prediction)
 ```
 
-系数、history 和加法的宽度、负数 floor 和 wrap32 均显式处理，不依赖 C++ 对负数移位或超范围有符号窄化的实现行为。原始 transport 在各层之间保留；矩阵计算在独立副本上逐行进行，然后执行 output shift，输出 24-bit PCM，按 `ch_assign` 排列。FBA 7.1 的 speaker IDs 是 side-before-back，WAVE mask 顺序是 back-before-side，必须转换。
+Coefficient, history and addition widths, negative-value floor operations and
+wrap32 are explicit. They do not depend on implementation-defined C++ negative
+shifts or out-of-range signed narrowing. Original transport PCM is retained
+between layers. Matrices execute row by row on independent copies, followed by
+output shift, 24-bit PCM conversion and `ch_assign` ordering. FBA 7.1 speaker
+IDs place side channels before back channels, whereas WAVE mask order places
+back channels before side channels; output must be reordered.
 
-本项目 Encoder 选择的 Atmos `ch_assign` 为 `[2,10,7,8,3,0,4,5,9,11,12,13,14,15,6,1]`，12/14 元素使用小于元素总数的子集；DME 使用自己的 permutation，Decoder 按字段读取而不硬编码此表。OAMD 已经按该 permutation 的解码输出顺序排列，因此 renderer 使用实际解码出的 `positions[output_index]`，不能硬编码“第 8 个就是某个高度扬声器”。
+This Encoder's Atmos `ch_assign` is
+`[2,10,7,8,3,0,4,5,9,11,12,13,14,15,6,1]`; 12/14-element profiles select
+entries below their element count. DME uses its own permutation, which the
+Decoder reads from the stream rather than hard-coding this table. OAMD already
+uses the decoded output order for that permutation. The renderer therefore
+uses actual `positions[output_index]` values rather than assuming that element
+8 always identifies a particular height speaker.
 
-## 校验与有界解析
+## Integrity and bounded parsing
 
-decoder 校验 AU 长度和 header parity、directory 范围、major-sync CRC、每层 restart CRC、每层 parity/checksum8、先前 restart interval 的 PCM checksum（默认报告，严格模式拒绝）、四层一致的末帧裁剪、Evolution wrapper 长度/parity、OAMD 元素长度和语法，以及 EMDF primary HMAC-SHA256。最终不完整 interval 没有下一次 restart PCM checksum；它仍有子流 CRC/parity 和有界解析。
+The Decoder checks AU length and header parity, directory ranges, major-sync
+CRC, each layer's restart CRC and parity/checksum8, the preceding restart
+interval's PCM checksum, matching final trim across all four layers,
+Evolution wrapper length/parity, OAMD element lengths and syntax, and EMDF
+primary HMAC-SHA256. PCM checksum mismatches are reported by default and
+rejected in strict mode. The final incomplete interval has no subsequent
+restart PCM checksum, but remains subject to substream CRC/parity and bounded
+parsing.
 
-任何失败都不提交解码状态。状态为固定数组；元数据与 HMAC 的临时存储上限由一个 AU 限定。开始解码必须有 major sync；显式 reset 表示切换流，未提供 seek/resync 扫描器。
+Failures do not commit decode state. State uses fixed arrays; temporary
+metadata and HMAC storage is bounded by one AU. Decoding must begin at a
+major sync. Explicit reset represents changing streams; no seek/resync scanner
+is provided.
 
-## 扬声器渲染
+## Speaker rendering
 
-| 布局 | 通道数 | 默认文件/API 顺序 |
+| Layout | Channels | Default file/API order |
 |---|---:|---|
 | 2.0 | 2 | FL FR |
 | 5.1 | 6 | FL FR FC LFE SL SR |
@@ -68,30 +119,59 @@ decoder 校验 AU 长度和 header parity、directory 范围、major-sync CRC、
 | 7.1.6 | 14 | FL FR FC LFE BL BR SL SR TFL TFR TBL TBR TML TMR |
 | 9.1.6 | 16 | FL FR FC LFE BL BR SL SR TFL TFR TBL TBR TML TMR FWL FWR |
 
-Atmos 的 2.0/5.1/7.1 使用码流的相应兼容呈现；plain 7.1 的 stereo/5.1 渲染从完整 bed 下混，原始呈现提取仍不变。高度布局使用 immersive 元素及 OAMD 房间坐标，在相邻左右位置、前侧后平面、地面与高度平面之间做 cos/sin 等功率插值。LFE 只送 LFE；5.1 地面布局将 rear/side 对应折叠到 surround；.2 高度布局将高度的前后位置折叠到 Top Middle。床声道流可渲染地面，高度保持零。
+Atmos 2.0/5.1/7.1 rendering uses the corresponding compatibility presentations.
+Plain 7.1 stereo/5.1 rendering downmixes the full bed; raw presentation
+extraction is unchanged. Height layouts use immersive elements and OAMD room
+coordinates with cos/sin equal-power interpolation between adjacent left/right
+positions, front/side/back planes, and ground/height planes. LFE routes only
+to LFE. Ground 5.1 folds matching rear/side channels into surround; .2 height
+layouts fold front/back height positions into Top Middle. Bed-only streams
+render ground channels and retain zero height PCM.
 
-9.1.6 的 front-wide 在侧与前平面之间。固定 encoder basis 缺少该位置，给定两部输出的 wide 能量只有浮点零点残差，24-bit WAVE 中为零；不能凭空恢复原始 IAB 位置。任意实际 front-wide 坐标经 C API 渲染时会送到真正的 FWL/FWR，脉冲验证覆盖此路径。
+The 9.1.6 front-wide position lies between the side and front planes. The fixed
+Encoder basis has no such anchor: the two supplied outputs have only floating
+point zero residuals in wide channels, which become zero in 24-bit WAVE.
+Original IAB positions cannot be recovered from discarded information.
+Actual front-wide coordinates supplied through the C API route to FWL/FWR;
+independent impulse tests cover this path.
 
-## 方案选择记录
+## Design decisions
 
-| 候选 | 评估 |
+| Candidate | Assessment |
 |---|---|
-| A：FFmpeg 子进程 | 引入运行时 executable，缺少第四层空间元素解码，不满足独立 decoder 要求 |
-| B：嵌入通用 libavcodec | 可复用成熟兼容呈现，但仍不能覆盖本项目 FBA 第四层矩阵/OAMD，依赖范围大 |
-| C：完整通用 TrueHD/MLP decoder | 范围包含多采样率、FBB、其他核心拓扑及其他 OAMD；仍超出已验证 profile |
-| D：连接既有 Swift encoder/Apple decoder API | 违反 decoder 的纯 C/C++ 与跨平台边界，Apple API 也不提供所需完整元素访问 |
-| E：从当前 encoder 反向实现独立 C++ 核心、C ABI 与 renderer | 有全部语法和可生成 PCM oracle；有界 I/O、Xcode/CMake 独立构建，选择此方案 |
+| A: FFmpeg subprocess | Requires a runtime executable and lacks fourth-layer spatial-element access; does not meet the independent Decoder requirement |
+| B: Embedded general libavcodec | Reuses mature compatibility presentations but does not cover this project's FBA fourth-layer matrix/OAMD; adds a broad dependency |
+| C: Full general TrueHD/MLP decoder | Includes other sample rates, FBB, core topologies and OAMD forms beyond the tested profile |
+| D: Existing Swift Encoder or Apple decoder API | Violates the C/C++ and cross-platform boundary; Apple APIs do not expose the required complete elements |
+| E: Independent C++ core, C ABI and renderer derived from the current Encoder | Provides available syntax and reproducible PCM references, bounded I/O and independent Xcode/CMake builds; selected |
 
-渲染另比较了固定通道复制、补零、通道数猜测、方向向量 VBAP 与房间坐标等功率网格。选择最后一项以匹配此 encoder 的 Cartesian basis；显式按标签路由和能量守恒，保留源锚点位置。没有冒称通用 Dolby renderer 的等价实现。
+Rendering candidates included direct channel copying, zero padding, channel
+count inference, direction-vector VBAP and a room-coordinate equal-power grid.
+The grid was selected to match this Encoder's Cartesian basis, preserve source
+anchors and energy, and route by explicit labels. It is not claimed to be
+equivalent to a general Dolby renderer.
 
-主要依据是本地 Swift encoder 和实际输出；固定 MLP 字段及基础算法另与 [FFmpeg 官方实现](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mlpdec.c) 核对。扬声器命名参考 [Dolby 布局指南](https://www.dolby.com/siteassets/technologies/dolby-atmos/atmos-installation-guidelines-121318_r3.1.pdf)，ALSA 标签核对 [ALSA 官方源码](https://github.com/alsa-project/alsa-lib/blob/master/include/pcm.h)。Decoder 1.4 使用的 dither 常量表已单独归属 FFmpeg，见 THIRD_PARTY_NOTICES.md；没有第三方 codec 运行时依赖。
+Primary evidence comes from the local Swift Encoder and actual output. Fixed
+MLP fields and basic algorithms were also checked against the
+[FFmpeg implementation](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/mlpdec.c).
+Speaker names follow the
+[Dolby layout guide](https://www.dolby.com/siteassets/technologies/dolby-atmos/atmos-installation-guidelines-121318_r3.1.pdf);
+ALSA labels were checked against the
+[ALSA source](https://github.com/alsa-project/alsa-lib/blob/master/include/pcm.h).
+Decoder 1.4's dither constants have separate FFmpeg attribution in
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md). No third-party codec runtime
+is required.
 
 ### Timed OAMD
 
-单 metadata block 的 sample offset mode 为 0（零）、1（8/16/18/24）、2（5-bit）；
-block offset factor 为 6-bit × 32 samples。Ramp code 0/1/2 表示 0/512/1536 samples，
-code 3 的当前语法提供 11-bit duration。坐标目标从指定采样开始线性渐变，允许跨 AU，
-新事件从该采样的当前坐标接续。位置和 PCM 分别恢复；移动不改变熵解码或逆矩阵。
+For a single metadata block, sample offset modes are 0 (zero), 1
+(8/16/18/24), and 2 (five-bit value). The block offset factor is a six-bit
+value multiplied by 32 samples. Ramp codes 0/1/2 represent 0/512/1536 samples;
+code 3 in the admitted syntax supplies an 11-bit duration. Coordinates ramp
+linearly from the specified sample, including across AU boundaries. A new
+event continues from the current coordinates at its sample. Position and PCM
+reconstruction are separate; motion does not change entropy decoding or the
+inverse matrix.
 
 ## Decoder 1.4 matrix extensions
 

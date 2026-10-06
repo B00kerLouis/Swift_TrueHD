@@ -2,6 +2,7 @@
 
 Use `B00kerLouis` as the project's first-party author and new Git author/committer.
 Do not add AI co-author trailers. Preserve required third-party license notices.
+Keep source comments, software documentation and product text in English.
 
 This project has a macOS Swift 6 TrueHD encoder and a separate portable C/C++17 decoder. Keep the original encoder sources and existing user changes intact when working on the decoder. Decoder implementation must contain only C/C++; do not add Swift, Objective-C, Objective-C++, Python, a codec subprocess, or a dependency on the encoder to either decoder target.
 
