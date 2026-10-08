@@ -36,7 +36,7 @@ private struct TurehdaCLI {
                 input = try requiredValue(for: option, at: &index, in: arguments)
             case "-o", "--output":
                 output = try requiredValue(for: option, at: &index, in: arguments)
-            case "--spatial-clusters":
+            case "-sc", "--spatial-clusters":
                 let value = try requiredValue(for: option, at: &index, in: arguments)
                 guard let count = Int(value), [12, 14, 16].contains(count) else {
                     throw CLIError.invalidSpatialClusters(value)
@@ -119,6 +119,11 @@ private struct TurehdaCLI {
         case "29.97df", "29.97-df", "29.97drop": .fps2997Drop
         case "29.97": .fps2997
         case "30": .fps30
+        case "47.952", "47.95", "48/1.001": .fps47952
+        case "48": .fps48
+        case "50": .fps50
+        case "59.94", "60/1.001": .fps5994
+        case "60": .fps60
         default: throw CLIError.invalidFrameRate(value)
         }
     }
@@ -145,9 +150,9 @@ private struct TurehdaCLI {
             Options:
               -i, --input PATH                 Input WAVE, DAMF, or MXF IAB master
               -o, --output PATH.mlp            Output TrueHD elementary stream
-                  --spatial-clusters 12|14|16  Atmos transport elements (default: 16)
+              -sc,--spatial-clusters 12|14|16  Atmos transport elements (default: 16)
                   --ffoa HH:MM:SS:FF           Output start timecode (default: 00:00:00:00)
-                  --frame-rate RATE            23.976|24|25|29.97df|29.97|30
+                  --frame-rate RATE            23.976|24|25|29.97|30|47.952|48|50|59.94|60
                   --drc-profile PROFILE        film_standard|film_light|music_standard|
                                                music_light|speech (default: film_light)
             """

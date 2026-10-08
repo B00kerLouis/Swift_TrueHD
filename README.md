@@ -148,7 +148,7 @@ The complete public CLI is:
 - `-o, --output PATH.mlp`
 - `--spatial-clusters 12|14|16` (default: `16`)
 - `--ffoa HH:MM:SS:FF` (optional; default: `00:00:00:00`)
-- `--frame-rate 23.976|24|25|29.97df|29.97|30` (optional)
+- `--frame-rate 23.976|24|25|29.97|30|47.952|48|50|59.94|60` (optional)
 - `--drc-profile film_standard|film_light|music_standard|music_light|speech`
   (optional; default: `film_light`)
 
@@ -156,6 +156,11 @@ Without `--frame-rate`, the output timecode rate follows the input DBMD/DAMF/IAB
 rate. `--ffoa` describes the output timeline and does not silently trim the
 input master. Removed or unknown options are rejected instead of being ignored.
 An existing output path is never overwritten implicitly.
+
+All non-drop-frame rates specified by SMPTE ST 12-1 from 23.976 through 60 fps
+are accepted. `47.95` and `48/1.001` are accepted as aliases for `47.952`, and
+`60/1.001` is accepted as an alias for `59.94`. The legacy `29.97df` override
+remains available for existing workflows.
 
 During an interactive encode, `turehda` draws one 40-cell terminal progress
 bar with the access-unit count and output size. It writes no incremental

@@ -51,7 +51,7 @@ enum EncodingCompanionWriter {
             spatialAnalysis = ""
         }
         let log = """
-        Swift TrueHD Encode Log
+        Dolby TrueHD Encode Log
 
         Identification
           Encoder: \(encoderName)
@@ -223,6 +223,11 @@ enum EncodingCompanionWriter {
         case .fps2997Drop: "29.97 DF"
         case .fps2997: "29.97"
         case .fps30: "30"
+        case .fps47952: "47.952"
+        case .fps48: "48"
+        case .fps50: "50"
+        case .fps5994: "59.94"
+        case .fps60: "60"
         }
     }
 }

@@ -60,7 +60,7 @@ public final class TrueHDEncoder: Sendable {
                 )
             }
             result = completedResult
-            encoderName = "Swift TrueHD Native Atmos"
+            encoderName = "libtruehda"
         } else {
             let encoder = try TrueHDBitstreamEncoder(configuration: configuration)
             result = try encoder.encode(

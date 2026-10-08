@@ -471,14 +471,10 @@ private struct DAMFDescriptor {
 
     private static func frameRate(from value: Double?) throws -> TrueHDFrameRate {
         guard let value else { throw TrueHDError.unsupportedInput("DAMF manifest has no fps") }
-        switch value {
-        case 23.97..<23.98: return .fps23976
-        case 24..<24.01: return .fps24
-        case 25..<25.01: return .fps25
-        case 29.96..<29.98: return .fps2997
-        case 30..<30.01: return .fps30
-        default: throw TrueHDError.unsupportedInput("Unsupported DAMF frame rate: \(value)")
+        guard let frameRate = TrueHDFrameRate.fromFramesPerSecond(value) else {
+            throw TrueHDError.unsupportedInput("Unsupported DAMF frame rate: \(value)")
         }
+        return frameRate
     }
 
     private static func sampleRate(from text: String) -> Int? {
@@ -1087,7 +1083,16 @@ private final class MXFIABReader: TrueHDAudioReader {
     }
 
     private static func frameRate(from code: Int) -> TrueHDFrameRate? {
-        switch code { case 0: return .fps24; case 1: return .fps25; case 2: return .fps30; case 9: return .fps23976; default: return nil }
+        switch code {
+        case 0: return .fps24
+        case 1: return .fps25
+        case 2: return .fps30
+        case 3: return .fps48
+        case 4: return .fps50
+        case 5: return .fps60
+        case 9: return .fps23976
+        default: return nil
+        }
     }
 
     private static func gain(prefix: UInt64, code: UInt64?) -> Double {

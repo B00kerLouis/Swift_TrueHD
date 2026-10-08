@@ -42,6 +42,11 @@ public enum TrueHDFrameRate: Int, Sendable, CaseIterable {
     case fps2997Drop
     case fps2997
     case fps30
+    case fps47952
+    case fps48
+    case fps50
+    case fps5994
+    case fps60
 
     public var framesPerSecond: Double {
         switch self {
@@ -50,6 +55,11 @@ public enum TrueHDFrameRate: Int, Sendable, CaseIterable {
         case .fps25: 25
         case .fps2997Drop, .fps2997: 30_000.0 / 1_001.0
         case .fps30: 30
+        case .fps47952: 48_000.0 / 1_001.0
+        case .fps48: 48
+        case .fps50: 50
+        case .fps5994: 60_000.0 / 1_001.0
+        case .fps60: 60
         }
     }
 
@@ -61,6 +71,11 @@ public enum TrueHDFrameRate: Int, Sendable, CaseIterable {
         case .fps2997Drop: "29.97 DF"
         case .fps2997: "29.97"
         case .fps30: "30"
+        case .fps47952: "47.952"
+        case .fps48: "48"
+        case .fps50: "50"
+        case .fps5994: "59.94"
+        case .fps60: "60"
         }
     }
 
@@ -69,6 +84,23 @@ public enum TrueHDFrameRate: Int, Sendable, CaseIterable {
         case .fps23976, .fps24: 24
         case .fps25: 25
         case .fps2997Drop, .fps2997, .fps30: 30
+        case .fps47952, .fps48: 48
+        case .fps50: 50
+        case .fps5994, .fps60: 60
+        }
+    }
+
+    /// Maps a decimal rate carried by DAMF to the corresponding SMPTE
+    /// non-drop-frame rate. A decimal source does not encode drop-frame mode.
+    static func fromFramesPerSecond(_ value: Double) -> TrueHDFrameRate? {
+        let nonDropFrameRates: [TrueHDFrameRate] = [
+            .fps23976, .fps24, .fps25, .fps2997, .fps30,
+            .fps47952, .fps48, .fps50, .fps5994, .fps60,
+        ]
+        return nonDropFrameRates.min { lhs, rhs in
+            abs(lhs.framesPerSecond - value) < abs(rhs.framesPerSecond - value)
+        }.flatMap { candidate in
+            abs(candidate.framesPerSecond - value) < 0.01 ? candidate : nil
         }
     }
 
@@ -84,6 +116,11 @@ public enum TrueHDFrameRate: Int, Sendable, CaseIterable {
         case 0x24: return .fps2997Drop
         case 0x25: return .fps2997
         case 0x26: return .fps30
+        case 0x27: return .fps47952
+        case 0x28: return .fps48
+        case 0x29: return .fps50
+        case 0x2B: return .fps5994
+        case 0x2C: return .fps60
         default: return nil
         }
     }
@@ -100,6 +137,11 @@ public enum TrueHDOutputFrameRate: Int, Sendable, CaseIterable {
     case fps2997Drop
     case fps2997
     case fps30
+    case fps47952
+    case fps48
+    case fps50
+    case fps5994
+    case fps60
 
     func resolve(input inputFrameRate: TrueHDFrameRate?) -> TrueHDFrameRate? {
         switch self {
@@ -110,6 +152,11 @@ public enum TrueHDOutputFrameRate: Int, Sendable, CaseIterable {
         case .fps2997Drop: .fps2997Drop
         case .fps2997: .fps2997
         case .fps30: .fps30
+        case .fps47952: .fps47952
+        case .fps48: .fps48
+        case .fps50: .fps50
+        case .fps5994: .fps5994
+        case .fps60: .fps60
         }
     }
 }
