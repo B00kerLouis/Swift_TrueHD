@@ -12,7 +12,7 @@ between the Encoder research license and Decoder LGPL.
 |---|---|
 | Independent codec | `Integrations/FFmpeg/libtruehdddec.c` registers `libtruehdd` with `AV_CODEC_ID_TRUEHD`, preserving `mlpdec.c` |
 | Build registration | External-library discovery, codec/Makefile registration, version, Changelog, documentation, FATE definitions and a repeatable installer |
-| Xcode compatibility | Existing `decoder_framework -> decoder_cli` graph, macOS 11+, arm64/x86_64; adapter compiled only inside FFmpeg |
+| Xcode compatibility | Existing `libtruehdec -> truehdec` graph, macOS 11+, arm64/x86_64; adapter compiled only inside FFmpeg |
 | Random-access checksums | Reset skips the unavailable preceding interval checksum; current restart CRC and subsequent interval checks remain enabled |
 | Major-sync parsing | Actual header length follows extension flags/counts; validates channel arrangements, modifiers, presentation/format flags and element counts |
 | PCM delivery | Right-aligned 24-bit PCM becomes full-scale S32; `ff_get_buffer` allocates output; exact core layouts and unspecified element layouts |
@@ -43,7 +43,7 @@ in `Sources/DecoderFramework/Decoder.cpp`. Public contracts are in
 
 ## Earlier local validation of the 1.2 adapter
 
-- Xcode 26.3: decoder_cli Release and decoder_framework Debug builds pass;
+- Xcode 26.3: truehdec Release and libtruehdec Debug builds pass;
   both products retain arm64/x86_64. Xcode project and Encoder target settings
   are unchanged.
 - Apple Clang 17 CMake Release: CTest 5/5, including compressed 7.1 and

@@ -4,9 +4,9 @@ exec_prefix=${prefix}
 libdir=${prefix}/lib
 includedir=${prefix}/include
 
-Name: truehdd
+Name: truehdec
 Description: Independent TrueHD decoder with a portable C ABI
 Version: @PROJECT_VERSION@
-Libs: -L"${libdir}" -ltruehdd
+Libs: -L"${libdir}" -ltruehdec
 Libs.private: @STHD_PC_PRIVATE_LIBS@
 Cflags: -I"${includedir}"@STHD_PC_CFLAGS@

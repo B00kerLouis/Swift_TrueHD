@@ -44,7 +44,7 @@ index 759cb8d..53f83ae 100755
  enabled libtls            && require_pkg_config libtls libtls tls.h tls_configure &&
                               { enabled gpl && ! enabled nonfree && die "ERROR: LibreSSL is incompatible with the gpl"; }
  enabled libtorch          && check_cxxflags -std=c++17 && require_cxx libtorch torch/torch.h "torch::Tensor" -ltorch -lc10 -ltorch_cpu -lstdc++ -lpthread
-+enabled libtruehdd        && require_pkg_config libtruehdd "truehdd >= 1.4.1" TrueHDDecoder.h "sthd_decoder_create sthd_decoder_drc_valid sthd_decoder_motion sthd_decoder_pcm_checksum sthd_decoder_set_strict_pcm_checksum sthd_decoder_end_of_stream sthd_abi_version"
++enabled libtruehdd        && require_pkg_config libtruehdd "truehdec >= 1.4.1" TrueHDDecoder.h "sthd_decoder_create sthd_decoder_drc_valid sthd_decoder_motion sthd_decoder_pcm_checksum sthd_decoder_set_strict_pcm_checksum sthd_decoder_end_of_stream sthd_abi_version"
  enabled libtwolame        && require libtwolame twolame.h twolame_init -ltwolame &&
                               { check_lib libtwolame twolame.h twolame_encode_buffer_float32_interleaved -ltwolame ||
                                 die "ERROR: libtwolame must be installed and version must be >= 0.3.10"; }

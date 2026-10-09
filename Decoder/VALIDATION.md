@@ -74,7 +74,7 @@ independent nine-layout renderer was not compared to Dolby's renderer.
 
 | Platform / tool | Validation | Not performed in this initial check |
 |---|---|---|
-| macOS / Xcode 26.3 | decoder_cli Release, decoder_framework Debug and original Encoder all Release pass; both Decoder products include arm64/x86_64 | Physical multichannel speaker playback |
+| macOS / Xcode 26.3 | truehdec Release, libtruehdec Debug and original Encoder all Release pass; both Decoder products include arm64/x86_64 | Physical multichannel speaker playback |
 | macOS / CMake + Apple Clang | Framework, CLI and C/C++ tests build; CTest and ASan/UBSan pass | None listed |
 | Windows x86_64 / MinGW GCC 16.2.0 | Framework, Unicode CLI and tests cross-compile; CLI has no libgcc/libstdc++ DLL imports | Native Windows execution, WASAPI devices, native MSVC build |
 | Linux x86_64-musl / Zig 0.16.0 Clang | CMake framework/CLI/test ELF cross-builds pass; ALSA adapter branch also compiles | Native Linux execution, native GCC build, ALSA devices |
@@ -118,7 +118,7 @@ Build/DecoderValidation/CMake/decoder_tests --stream \
   Build/DecoderValidation/TBH-16.mlp Build/DecoderValidation/TBH-oracle
 Build/DecoderValidation/CMake/decoder_tests --stream \
   Build/DecoderValidation/NaturesFury-16.mlp Build/DecoderValidation/NaturesFury-oracle
-Build/DecoderValidation/CMake/truehdd -i Build/DecoderValidation/TBH-16.mlp --verify-only
+Build/DecoderValidation/CMake/truehdec -i Build/DecoderValidation/TBH-16.mlp --verify-only
 ```
 
 Generate independent Decoder references:
@@ -187,7 +187,7 @@ Local CoreAudio complete-program tests used gain zero to verify actual schedulin
 
 Fragment sizes include 1, 3, 7, 65,536, 5 and 8,191 bytes, so AU boundaries are not supplied by the test caller. Zero-timeout retries close without duplicate decode/enqueue; final counters match exact programme sample count. The synthetic fixture verifies 12,345-frame final trim, last frame timeline, idempotent finish, input refusal after finish, and active/cross-thread cancellation. Partial headers/payloads, invalid lengths, empty streams and ABI options size are tested before opening a device. Local native player tests also pass ASan/UBSan.
 
-Local MinGW build produces `truehdd.dll` and confirms all `sthd_player_*` exported symbols. Linux target builds an ELF shared `libtruehdd.so` with versioned SONAME. Actions package DLL/import library or SO and header, link/run C ABI tests against the shared products, and play encoded fragments through each labelled PipeWire sink. Physical Windows Spatial Sound playback remains a hardware validation boundary.
+Local MinGW build produces `truehdec.dll` and confirms all `sthd_player_*` exported symbols. Linux target builds an ELF shared `libtruehdec.so` with versioned SONAME. Actions package DLL/import library or SO and header, link/run C ABI tests against the shared products, and play encoded fragments through each labelled PipeWire sink. Physical Windows Spatial Sound playback remains a hardware validation boundary.
 
 
 ## Auto mapping regression — 2026-10-03
@@ -204,7 +204,7 @@ extension/profile parsing. Frame layout and C ABI v3 remain unchanged;
 `sthd_decoder_drc_valid` adds an explicit validity query. The existing Xcode
 graph and Encoder implementation are preserved.
 
-Local results: Xcode decoder_cli Release/framework Debug, CMake CTest 5/5,
+Local results: Xcode truehdec Release/framework Debug, CMake CTest 5/5,
 15 independent PCM FATE hashes, 15 API lifecycle/metadata/error cases (also with
 adapter/core ASan/UBSan), configured FFmpeg `make fate` 317/317, and 47,521
 structured fuzz runs. Original synthetic streams and reference hashes are
@@ -253,7 +253,7 @@ it does not certify bit-identical rendering. Raw reference SHA-256 is
 
 | Check | Result |
 |---|---|
-| Xcode decoder_cli Release / decoder_framework Debug | Pass, arm64 + x86_64; final build has no project source warnings |
+| Xcode truehdec Release / libtruehdec Debug | Pass, arm64 + x86_64; final build has no project source warnings |
 | CMake CTest | 7/7, including timed OAMD, strict/report checksum modes and transactional retries |
 | ASan/UBSan | 7/7 plus complete stereo decode of the supplied file, no reports |
 | CoreAudio playback, gain 0 dB | 5,200,000 decoded/consumed frames; zero underruns |

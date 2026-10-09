@@ -145,7 +145,7 @@ private struct TurehdaCLI {
         print(
             """
             Usage:
-              turehda -i INPUT -o OUTPUT.mlp [options]
+              truehda -i INPUT -o OUTPUT.mlp [options]
 
             Options:
               -i, --input PATH                 Input WAVE, DAMF, or MXF IAB master

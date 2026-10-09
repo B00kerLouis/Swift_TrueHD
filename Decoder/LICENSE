@@ -11,7 +11,7 @@ merchantability or fitness for a particular purpose. See the complete GNU
 Lesser General Public License for the applicable terms.
 
 The complete text is distributed as LGPL-2.1-or-later.txt, located in LICENSES/
-in the source repository and share/licenses/truehdd/ in CMake installations.
+in the source repository and share/licenses/truehdec/ in CMake installations.
 Third-party libraries retain their own licenses. The Encoder's separate
 research, language, reverse-engineering and commercial-use restrictions do not
 apply to this Decoder.

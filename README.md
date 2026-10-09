@@ -94,16 +94,16 @@ xcodebuild \
 
 The framework and CLI are written to
 `Build/Products/Release/libtruehda.framework` and
-`Build/Products/Release/turehda`. Both contain arm64 and x86_64 slices. The
+`Build/Products/Release/truehda`. Both contain arm64 and x86_64 slices. The
 framework binary is a static archive: Xcode links its object code directly into
-`turehda`, so the CLI can be copied and run without shipping
+`truehda`, so the CLI can be copied and run without shipping
 `libtruehda.framework` beside it.
 
 The standalone-link requirement can be checked with:
 
 ```sh
-! otool -L Build/Products/Release/turehda | grep -q libtruehda
-Build/Products/Release/turehda --help
+! otool -L Build/Products/Release/truehda | grep -q libtruehda
+Build/Products/Release/truehda --help
 ```
 
 Run the Xcode-managed test target with:
@@ -127,16 +127,16 @@ added without growing one flat directory:
 - `Swift_TrueHD/Encoding`: TrueHD and Atmos bitstream/spatial encoders.
 - `Swift_TrueHD/IO`: WAVE input and high-resolution timing output.
 - `Swift_TrueHD/API`: Objective-C bridge classes.
-- `CLI`: the `turehda` executable entry point.
+- `CLI`: the `truehda` executable entry point.
 
 The Xcode synchronized source groups include these directories recursively.
 The shared `all` Scheme builds the `libtruehda` framework target first and then
-the `turehda` CLI target; `SwiftTrueHDTests` is a separate Xcode-managed test target.
+the `truehda` CLI target; `SwiftTrueHDTests` is a separate Xcode-managed test target.
 
 ## CLI
 
 ```sh
-Build/Products/Release/turehda \
+Build/Products/Release/truehda \
   -i /path/to/master-damf \
   -o atmos-master-14.mlp \
   --spatial-clusters 14
@@ -162,7 +162,7 @@ are accepted. `47.95` and `48/1.001` are accepted as aliases for `47.952`, and
 `60/1.001` is accepted as an alias for `59.94`. The legacy `29.97df` override
 remains available for existing workflows.
 
-During an interactive encode, `turehda` draws one 40-cell terminal progress
+During an interactive encode, `truehda` draws one 40-cell terminal progress
 bar with the access-unit count and output size. It writes no incremental
 progress records when stderr is redirected, keeping CI and log output clean.
 

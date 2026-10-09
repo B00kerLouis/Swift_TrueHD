@@ -113,11 +113,11 @@ output semantics.
 ## Usage
 
 ```sh
-truehdd -i INPUT.mlp --play --layout 7.1
-truehdd -i INPUT.mlp --play                      # actual labels or Spatial capability
-truehdd -i INPUT.mlp --play --allow-pcm-fallback # Windows immersive fallback
-truehdd -i INPUT.mlp -o OUTPUT.s24le.pcm --layout 7.1.4 --format s24le
-truehdd --device-info
+truehdec -i INPUT.mlp --play --layout 7.1
+truehdec -i INPUT.mlp --play                      # actual labels or Spatial capability
+truehdec -i INPUT.mlp --play --allow-pcm-fallback # Windows immersive fallback
+truehdec -i INPUT.mlp -o OUTPUT.s24le.pcm --layout 7.1.4 --format s24le
+truehdec --device-info
 ```
 
 System volume, DSP, quantization and Spatial/HRTF rendering are outside the

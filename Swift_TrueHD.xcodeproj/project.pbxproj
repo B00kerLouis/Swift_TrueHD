@@ -32,11 +32,11 @@
 			remoteGlobalIDString = C95E8537300A267200E4D3E9;
 			remoteInfo = libtruehda;
 		};
-		D2000000000000000000002E = { isa = PBXContainerItemProxy; containerPortal = C95E852F300A267200E4D3E9; proxyType = 1; remoteGlobalIDString = D20000000000000000000032; remoteInfo = decoder_framework; };
+		D2000000000000000000002E = { isa = PBXContainerItemProxy; containerPortal = C95E852F300A267200E4D3E9; proxyType = 1; remoteGlobalIDString = D20000000000000000000032; remoteInfo = libtruehdec; };
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		A10000000000000000000003 /* turehda */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = turehda; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000003 /* truehda */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = truehda; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000000000000000000000E /* SwiftTrueHDTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SwiftTrueHDTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C95E8538300A267200E4D3E9 /* libtruehda.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = libtruehda.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		D20000000000000000000001 = { isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = "Sources/DecoderFramework/Decoder.cpp"; sourceTree = "<group>"; };
@@ -46,8 +46,8 @@
 		D20000000000000000000005 = { isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Sources/DecoderFramework/include/TrueHDDecoder.h"; sourceTree = "<group>"; };
 		D20000000000000000000006 = { isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Sources/DecoderFramework/BitReader.hpp"; sourceTree = "<group>"; };
 		D20000000000000000000007 = { isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = "Sources/DecoderCLI/main.cpp"; sourceTree = "<group>"; };
-		D20000000000000000000008 = { isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = libtruehdd.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		D20000000000000000000009 = { isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = truehdd; sourceTree = BUILT_PRODUCTS_DIR; };
+		D20000000000000000000008 = { isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = libtruehdec.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		D20000000000000000000009 = { isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = truehdec; sourceTree = BUILT_PRODUCTS_DIR; };
 		D2000000000000000000000A = { isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreAudio.framework; path = System/Library/Frameworks/CoreAudio.framework; sourceTree = SDKROOT; };
 		D2000000000000000000000B = { isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
 		D20000000000000000000046 = { isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Sources/DecoderFramework/AudioOutput.cpp; sourceTree = "<group>"; };
@@ -122,7 +122,7 @@
 			isa = PBXGroup;
 			children = (
 				C95E8538300A267200E4D3E9 /* libtruehda.framework */,
-				A10000000000000000000003 /* turehda */,
+				A10000000000000000000003 /* truehda */,
 				A1000000000000000000000E /* SwiftTrueHDTests.xctest */,
 				D20000000000000000000008,
 				D20000000000000000000009,
@@ -147,9 +147,9 @@
 /* End PBXHeadersBuildPhase section */
 
 /* Begin PBXNativeTarget section */
-		A10000000000000000000008 /* turehda */ = {
+		A10000000000000000000008 /* truehda */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A1000000000000000000000C /* Build configuration list for PBXNativeTarget "turehda" */;
+			buildConfigurationList = A1000000000000000000000C /* Build configuration list for PBXNativeTarget "truehda" */;
 			buildPhases = (
 				A10000000000000000000007 /* Sources */,
 				A10000000000000000000005 /* Frameworks */,
@@ -163,11 +163,11 @@
 			fileSystemSynchronizedGroups = (
 				A10000000000000000000004 /* Sources/CLI */,
 			);
-			name = turehda;
+			name = truehda;
 			packageProductDependencies = (
 			);
-			productName = turehda;
-			productReference = A10000000000000000000003 /* turehda */;
+			productName = truehda;
+			productReference = A10000000000000000000003 /* truehda */;
 			productType = "com.apple.product-type.tool";
 		};
 		A10000000000000000000013 /* SwiftTrueHDTests */ = {
@@ -216,8 +216,8 @@
 			productReference = C95E8538300A267200E4D3E9 /* libtruehda.framework */;
 			productType = "com.apple.product-type.framework";
 		};
-		D20000000000000000000032 = { isa = PBXNativeTarget; buildConfigurationList = D20000000000000000000040; buildPhases = (D20000000000000000000028,D20000000000000000000029,D2000000000000000000002B,D2000000000000000000002D,); buildRules = (); dependencies = (); name = decoder_framework; productName = libtruehdd; productReference = D20000000000000000000008; productType = "com.apple.product-type.framework"; };
-		D20000000000000000000033 = { isa = PBXNativeTarget; buildConfigurationList = D20000000000000000000041; buildPhases = (D2000000000000000000002A,D2000000000000000000002C,); buildRules = (); dependencies = (D2000000000000000000002F,); name = decoder_cli; productName = truehdd; productReference = D20000000000000000000009; productType = "com.apple.product-type.tool"; };
+		D20000000000000000000032 = { isa = PBXNativeTarget; buildConfigurationList = D20000000000000000000040; buildPhases = (D20000000000000000000028,D20000000000000000000029,D2000000000000000000002B,D2000000000000000000002D,); buildRules = (); dependencies = (); name = libtruehdec; productName = libtruehdec; productReference = D20000000000000000000008; productType = "com.apple.product-type.framework"; };
+		D20000000000000000000033 = { isa = PBXNativeTarget; buildConfigurationList = D20000000000000000000041; buildPhases = (D2000000000000000000002A,D2000000000000000000002C,); buildRules = (); dependencies = (D2000000000000000000002F,); name = truehdec; productName = truehdec; productReference = D20000000000000000000009; productType = "com.apple.product-type.tool"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -251,7 +251,7 @@
 			projectRoot = "";
 			targets = (
 				C95E8537300A267200E4D3E9 /* libtruehda */,
-				A10000000000000000000008 /* turehda */,
+				A10000000000000000000008 /* truehda */,
 				A10000000000000000000013 /* SwiftTrueHDTests */,
 				D20000000000000000000032,
 				D20000000000000000000033,
@@ -340,9 +340,9 @@
 					"@loader_path",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Sunyun-Louis.turehda";
-				PRODUCT_MODULE_NAME = turehda;
-				PRODUCT_NAME = turehda;
+				PRODUCT_BUNDLE_IDENTIFIER = "Sunyun-Louis.truehda";
+				PRODUCT_MODULE_NAME = truehda;
+				PRODUCT_NAME = truehda;
 				SKIP_INSTALL = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -367,9 +367,9 @@
 					"@loader_path",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Sunyun-Louis.turehda";
-				PRODUCT_MODULE_NAME = turehda;
-				PRODUCT_NAME = turehda;
+				PRODUCT_BUNDLE_IDENTIFIER = "Sunyun-Louis.truehda";
+				PRODUCT_MODULE_NAME = truehda;
+				PRODUCT_NAME = truehda;
 				SKIP_INSTALL = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -632,14 +632,14 @@
 			};
 			name = Release;
 		};
-		D2000000000000000000003C = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 0; EXCLUDED_SOURCE_FILE_NAMES = PipeWireAudio.cpp; PRODUCT_NAME = libtruehdd; PRODUCT_MODULE_NAME = libtruehdd; PRODUCT_BUNDLE_IDENTIFIER = "Sunyun-Louis.libtruehdd"; MACH_O_TYPE = staticlib; GENERATE_INFOPLIST_FILE = YES; DEFINES_MODULE = YES; MODULEMAP_FILE = "$(SRCROOT)/Sources/DecoderFramework/include/module.modulemap"; SKIP_INSTALL = YES; }; name = Debug; };
-		D2000000000000000000003D = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 3; EXCLUDED_SOURCE_FILE_NAMES = PipeWireAudio.cpp; PRODUCT_NAME = libtruehdd; PRODUCT_MODULE_NAME = libtruehdd; PRODUCT_BUNDLE_IDENTIFIER = "Sunyun-Louis.libtruehdd"; MACH_O_TYPE = staticlib; GENERATE_INFOPLIST_FILE = YES; DEFINES_MODULE = YES; MODULEMAP_FILE = "$(SRCROOT)/Sources/DecoderFramework/include/module.modulemap"; SKIP_INSTALL = YES; }; name = Release; };
-		D2000000000000000000003E = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 0; PRODUCT_NAME = truehdd; }; name = Debug; };
-		D2000000000000000000003F = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 3; PRODUCT_NAME = truehdd; }; name = Release; };
+		D2000000000000000000003C = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 0; EXCLUDED_SOURCE_FILE_NAMES = PipeWireAudio.cpp; PRODUCT_NAME = libtruehdec; PRODUCT_MODULE_NAME = libtruehdec; PRODUCT_BUNDLE_IDENTIFIER = "Sunyun-Louis.libtruehdec"; MACH_O_TYPE = staticlib; GENERATE_INFOPLIST_FILE = YES; DEFINES_MODULE = YES; MODULEMAP_FILE = "$(SRCROOT)/Sources/DecoderFramework/include/module.modulemap"; SKIP_INSTALL = YES; }; name = Debug; };
+		D2000000000000000000003D = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 3; EXCLUDED_SOURCE_FILE_NAMES = PipeWireAudio.cpp; PRODUCT_NAME = libtruehdec; PRODUCT_MODULE_NAME = libtruehdec; PRODUCT_BUNDLE_IDENTIFIER = "Sunyun-Louis.libtruehdec"; MACH_O_TYPE = staticlib; GENERATE_INFOPLIST_FILE = YES; DEFINES_MODULE = YES; MODULEMAP_FILE = "$(SRCROOT)/Sources/DecoderFramework/include/module.modulemap"; SKIP_INSTALL = YES; }; name = Release; };
+		D2000000000000000000003E = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 0; PRODUCT_NAME = truehdec; }; name = Debug; };
+		D2000000000000000000003F = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 3; PRODUCT_NAME = truehdec; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A1000000000000000000000C /* Build configuration list for PBXNativeTarget "turehda" */ = {
+		A1000000000000000000000C /* Build configuration list for PBXNativeTarget "truehda" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A1000000000000000000000A /* Debug */,

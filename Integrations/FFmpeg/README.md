@@ -1,11 +1,12 @@
 # Independent FFmpeg Decoder adapter
 
-`libtruehdd` is a separate FFmpeg decoder for `AV_CODEC_ID_TRUEHD`. The C adapter
+`libtruehdd` is a separate FFmpeg decoder for `AV_CODEC_ID_TRUEHD`, backed by
+the `truehdec` library and pkg-config package. The C adapter
 calls the independent Decoder's public API; it does not modify `mlpdec.c` or add
 FFmpeg, Swift or the Encoder to the Decoder products. All files here, including
 the original synthetic test media, are under LGPL-2.1-or-later.
 
-The existing Xcode graph remains `decoder_framework -> decoder_cli` and keeps
+The Xcode graph is `libtruehdec -> truehdec` and keeps
 macOS 11+, arm64/x86_64. Adapter code builds inside FFmpeg, whose internal
 `FFCodec` headers are not installed public APIs. They do not become dependencies
 of the Xcode framework or CLI. CMake remains the portable library build.
@@ -18,7 +19,7 @@ actual sources and products can stay under the project's ignored `Build/`.
 
 ```sh
 cmake -S . -B Build/FFmpegLibrary -DCMAKE_BUILD_TYPE=Release \
-  -DSTHD_NATIVE_DEVICE=OFF -DCMAKE_INSTALL_PREFIX=/path/without/spaces/truehdd
+  -DSTHD_NATIVE_DEVICE=OFF -DCMAKE_INSTALL_PREFIX=/path/without/spaces/truehdec
 cmake --build Build/FFmpegLibrary --parallel 4
 cmake --install Build/FFmpegLibrary
 
@@ -35,8 +36,8 @@ differing installed adapter files. The tested FFmpeg revision is recorded in
 Configure and build in that FFmpeg checkout:
 
 ```sh
-export PKG_CONFIG_PATH=/path/without/spaces/truehdd/lib/pkgconfig
-export LD_LIBRARY_PATH=/path/without/spaces/truehdd/lib
+export PKG_CONFIG_PATH=/path/without/spaces/truehdec/lib/pkgconfig
+export LD_LIBRARY_PATH=/path/without/spaces/truehdec/lib
 ./configure --disable-everything --disable-autodetect --disable-doc \
   --enable-ffmpeg --enable-ffprobe --enable-libtruehdd --pkg-config-flags=--static \
   --enable-decoder=libtruehdd --enable-parser=mlp --enable-demuxer=truehd \
@@ -46,7 +47,7 @@ export LD_LIBRARY_PATH=/path/without/spaces/truehdd/lib
 make -j4
 ```
 
-`truehdd.pc` carries the C++ runtime and optional native libraries for static
+`truehdec.pc` carries the C++ runtime and optional native libraries for static
 linking. Windows shared-library consumers receive `STHD_SHARED=1`. The tested
 adapter requires Decoder 1.4.1 and C ABI v3, including DRC, motion and PCM-checksum queries.
 Native playback may still be built and used by the project's normal Xcode/CLI
@@ -107,7 +108,7 @@ sh Integrations/FFmpeg/check.sh /path/without/spaces/ffmpeg \
   /path/without/spaces/adapter-checks
 ```
 
-The check script needs the minimal build above and the installed `truehdd.pc`.
+The check script needs the minimal build above and the installed `truehdec.pc`.
 It runs 16 API cases for presentation selection, S32 alignment, PTS/trim, copied
 metadata, independent instances, major-sync flush, delayed OAMD, corruption and
 recovery, absent presentation errors, disabled metadata and retained frame

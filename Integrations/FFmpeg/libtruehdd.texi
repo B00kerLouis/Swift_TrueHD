@@ -1,7 +1,7 @@
 @section libtruehdd
 
-TrueHD decoding through the independent libtruehdd library, using the
-48 kHz FBA profile with timed OAMD positions. Requires libtruehdd 1.4.1 or
+TrueHD decoding through the independent truehdec library, using the
+48 kHz FBA profile with timed OAMD positions. Requires truehdec 1.4.1 or
 later and configure option @code{--enable-libtruehdd}. Select this implementation
 explicitly with @code{-c:a libtruehdd} before the input.
 

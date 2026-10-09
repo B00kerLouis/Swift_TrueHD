@@ -67,18 +67,18 @@ after seek are marked unavailable rather than treated as known unity gain.
 ## CLI
 
 ```sh
-truehdd play -i INPUT.mlp --layout 2.0
-cat INPUT.mlp | truehdd play -i - --layout 2.0
-truehdd -i INPUT.mlp --play --layout 7.1.4
+truehdec play -i INPUT.mlp --layout 2.0
+cat INPUT.mlp | truehdec play -i - --layout 2.0
+truehdec -i INPUT.mlp --play --layout 7.1.4
 ```
 
 `play` is the real-time playback subcommand; `--play` remains compatible. `-i -` reads binary stdin, including on Windows. A trimmed end marker finishes a live stdin stream without requiring the transport to close. File export and simultaneous playback use the same decoded player frame.
 
 ## Products and ownership
 
-- macOS: Xcode `decoder_framework` -> `libtruehdd.framework`, `decoder_cli` -> `truehdd` (arm64/x86_64).
-- Windows: `truehdd.dll`, import library (`truehdd.lib` for MSVC), `truehdd.exe`.
-- Linux: `libtruehdd.so.1.4.1` with SONAME `libtruehdd.so.1` and `libtruehdd.so` link, plus `truehdd`.
+- macOS: Xcode `libtruehdec` -> `libtruehdec.framework`, `truehdec` -> `truehdec` (arm64/x86_64).
+- Windows: `truehdec.dll`, import library (`truehdec.lib` for MSVC), `truehdec.exe`.
+- Linux: `libtruehdec.so.1.4.1` with SONAME `libtruehdec.so.1` and `libtruehdec.so` link, plus `truehdec`.
 
 Shared libraries expose `STHD_API` C symbols; internal C++ symbols are hidden on ELF. CMake propagates `STHD_SHARED` to linked clients and defines `STHD_BUILDING_LIBRARY` only for the library. Manual Windows consumers should define `STHD_SHARED=1` and link the import library. Keep the DLL next to the executable; keep SO files next to the build executable or install under `lib/` with the install RPATH. Use library destroy functions for opaque objects, and never free borrowed strings with the host allocator. Destroy all sessions before unloading a DLL/SO.
 

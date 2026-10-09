@@ -35,9 +35,9 @@ void check(STHDStatus s) {
 }
 void usage() {
     std::cout
-        << "Usage: truehdd -i INPUT.mlp -o OUTPUT.wav [--layout NAME | --presentation "
+        << "Usage: truehdec -i INPUT.mlp -o OUTPUT.wav [--layout NAME | --presentation "
            "2|6|8|elements]\n"
-           "Realtime: truehdd play -i INPUT.mlp|- [--layout NAME]\n"
+           "Realtime: truehdec play -i INPUT.mlp|- [--layout NAME]\n"
            "Layouts: auto, 2.0, 5.1, 7.1, 5.1.2, 5.1.4, 7.1.2, 7.1.4, 7.1.6, 9.1.6\n"
            "5.1 family also accepts (back) suffix for BL/BR surround labels.\n"
            "  --layout auto            Read the actual default device speaker labels (default)\n"

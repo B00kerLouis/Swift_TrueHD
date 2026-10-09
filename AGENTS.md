@@ -9,10 +9,10 @@ This project has a macOS Swift 6 TrueHD encoder and a separate portable C/C++17 
 ## Architecture and platforms
 
 - Xcode 26.3 is the tested local toolchain. Existing encoder targets use Swift 6 and macOS 14+ target settings; do not upgrade them as part of decoder work.
-- `libtruehda` -> `turehda` is the existing macOS encoder graph.
-- `decoder_framework` -> `decoder_cli` is the new independent decoder graph. Products: static `libtruehdd.framework` and standalone `truehdd`; macOS 11+, arm64 and x86_64.
+- `libtruehda` -> `truehda` is the existing macOS encoder graph.
+- `libtruehdec` -> `truehdec` is the new independent decoder graph. Products: static `libtruehdec.framework` and standalone `truehdec`; macOS 11+, arm64 and x86_64.
 - Decoder sources: `Sources/DecoderFramework` and `Sources/DecoderCLI`. C ABI: `Sources/DecoderFramework/include/TrueHDDecoder.h`.
-- Portable CMake builds only the decoder on Windows/Linux (also usable for C/C++ testing on macOS). Require C++17, C, exceptions, standard library; no Swift Package Manager. Windows produces truehdd.dll and an import library; Linux produces libtruehdd.so with SONAME 1. Windows native discovery uses WASAPI; macOS uses CoreAudio/AudioToolbox; Linux playback uses PipeWire development headers/libraries; legacy ALSA discovery remains optional.
+- Portable CMake builds only the decoder on Windows/Linux (also usable for C/C++ testing on macOS). Require C++17, C, exceptions, standard library; no Swift Package Manager. Windows produces truehdec.dll and an import library; Linux produces libtruehdec.so with SONAME 1. Windows native discovery uses WASAPI; macOS uses CoreAudio/AudioToolbox; Linux playback uses PipeWire development headers/libraries; legacy ALSA discovery remains optional.
 - `DecoderTests` is a separate C/C++ test executable in CMake, outside the existing Swift test group. Do not add decoder sources to the Swift encoder targets.
 
 ## State, storage and concurrency
@@ -28,10 +28,10 @@ Native discovery must use actual labelled topology; channel count alone cannot d
 macOS authoritative build:
 
 ```sh
-xcodebuild -project Swift_TrueHD.xcodeproj -scheme decoder_cli -configuration Release -destination 'generic/platform=macOS' -derivedDataPath Build/DecoderDerived build
+xcodebuild -project Swift_TrueHD.xcodeproj -scheme truehdec -configuration Release -destination 'generic/platform=macOS' -derivedDataPath Build/DecoderDerived build
 ```
 
-Also build `decoder_framework` Debug when changing the framework. Existing encoder Scheme `all` remains intact.
+Also build `libtruehdec` Debug when changing the framework. Existing encoder Scheme `all` remains intact.
 
 Portable tests:
 

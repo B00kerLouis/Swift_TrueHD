@@ -7,9 +7,9 @@ output_directory="$2"
 integration_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 mkdir -p "$output_directory"
 task_cc="${CC:-cc}"
-task_cflags=$(pkg-config --cflags truehdd)
-task_libraries=$(pkg-config --static --libs truehdd)
-task_library_directory=$(pkg-config --variable=libdir truehdd)
+task_cflags=$(pkg-config --cflags truehdec)
+task_libraries=$(pkg-config --static --libs truehdec)
+task_library_directory=$(pkg-config --variable=libdir truehdec)
 export LD_LIBRARY_PATH="$task_library_directory${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # FFmpeg/pkg-config installations used here must have paths without whitespace.
 "$task_cc" -std=c11 -Wall -Wextra -Werror $task_cflags -I"$ffmpeg_source" \

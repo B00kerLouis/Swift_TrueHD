@@ -1,7 +1,7 @@
 # TrueHD Decoder
 
-The project provides two independent Xcode targets: `decoder_framework`
-(the static `libtruehdd.framework`) and `decoder_cli` (`truehdd`). Decoding,
+The project provides two independent Xcode targets: `libtruehdec`
+(the static `libtruehdec.framework`) and `truehdec` (the standalone CLI). Decoding,
 integrity checks, spatial rendering, device discovery and CLI implementation
 use only C/C++. Decoder products do not link the Swift Encoder, FFmpeg or an
 external decoder. Existing Encoder sources, tests and schemes are preserved.
@@ -29,23 +29,23 @@ the Xcode framework/CLI retain their existing build graph.
 ## macOS / Xcode
 
 ```sh
-xcodebuild -project Swift_TrueHD.xcodeproj -scheme decoder_cli \
+xcodebuild -project Swift_TrueHD.xcodeproj -scheme truehdec \
   -configuration Release -destination 'generic/platform=macOS' \
   -derivedDataPath Build/DecoderDerived \
   CONFIGURATION_BUILD_DIR="$PWD/Build/Products/Release" build
 ```
 
-Open the same `.xcodeproj` and choose `decoder_cli` or `decoder_framework`.
-Both targets are independent of `libtruehda` and `turehda`. The CLI depends
+Open the same `.xcodeproj` and choose `truehdec` or `libtruehdec`.
+Both targets are independent of `libtruehda` and `truehda`. The CLI depends
 only on the Decoder framework and system audio libraries. Xcode 26.3 is the
 tested toolchain; the Decoder deployment target is macOS 11.0. Release
 products are universal arm64/x86_64 binaries.
 
 ```sh
-Build/Products/Release/truehdd -i INPUT.mlp -o OUTPUT.wav --layout 7.1.4
-Build/Products/Release/truehdd -i INPUT.mlp --verify-only
-Build/Products/Release/truehdd -i INPUT.mlp -o ELEMENTS.wav --presentation elements
-Build/Products/Release/truehdd --device-info
+Build/Products/Release/truehdec -i INPUT.mlp -o OUTPUT.wav --layout 7.1.4
+Build/Products/Release/truehdec -i INPUT.mlp --verify-only
+Build/Products/Release/truehdec -i INPUT.mlp -o ELEMENTS.wav --presentation elements
+Build/Products/Release/truehdec --device-info
 ```
 
 Supported layouts are `2.0`, `5.1`, `7.1`, `5.1.2`, `5.1.4`, `7.1.2`,
@@ -97,7 +97,7 @@ ctest --test-dir Build/DecoderPortable -C Release --output-on-failure
 
 Windows supports MSVC or MinGW. The CLI uses Unicode command lines and paths;
 WASAPI shared mix-format channel masks determine device layouts. The MinGW CLI
-statically links its own compiler runtime. The shared `truehdd.dll` still
+statically links its own compiler runtime. The shared `truehdec.dll` still
 requires its MinGW runtime dependencies alongside the DLL: in the tested
 build these are `libstdc++-6.dll`, `libgcc_s_seh-1.dll` and
 `libwinpthread-1.dll`. Standard Windows WAVE masks do not represent every Top
@@ -173,7 +173,7 @@ Linux also exercises actual PipeWire virtual-sink playback for all layouts.
 
 ## Encoded real-time playback API
 
-C ABI v3 adds `sthd_player_create/feed/finish/cancel/stats/last_frame/destroy` for arbitrary encoded byte chunks. CLI `truehdd play -i INPUT.mlp` and `-i -` use the same session. Windows/Linux CMake products are shared `truehdd.dll` / `libtruehdd.so`, with C-only exported API. See [PLAY_API.md](PLAY_API.md) for lifecycle, backpressure and ownership.
+C ABI v3 adds `sthd_player_create/feed/finish/cancel/stats/last_frame/destroy` for arbitrary encoded byte chunks. CLI `truehdec play -i INPUT.mlp` and `-i -` use the same session. Windows/Linux CMake products are shared `truehdec.dll` / `libtruehdec.so`, with C-only exported API. See [PLAY_API.md](PLAY_API.md) for lifecycle, backpressure and ownership.
 
 ### Moving OAMD and PCM checksums
 

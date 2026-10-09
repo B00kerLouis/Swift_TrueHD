@@ -23,11 +23,11 @@ jobs:
         run: |
           xcodebuild -version
           xcodebuild -project Swift_TrueHD.xcodeproj -scheme all -configuration Release -destination 'generic/platform=macOS' -derivedDataPath Build/EncoderDerived CONFIGURATION_BUILD_DIR="$PWD/Build/Products/Release" CODE_SIGNING_ALLOWED=NO build
-          xcodebuild -project Swift_TrueHD.xcodeproj -scheme decoder_cli -configuration Release -destination 'generic/platform=macOS' -derivedDataPath Build/DecoderDerived CONFIGURATION_BUILD_DIR="$PWD/Build/Products/Release" CODE_SIGNING_ALLOWED=NO build
-          xcodebuild -project Swift_TrueHD.xcodeproj -scheme decoder_framework -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath Build/DecoderDerived CONFIGURATION_BUILD_DIR="$PWD/Build/Products/Debug" CODE_SIGNING_ALLOWED=NO build
-          lipo -info Build/Products/Release/turehda
-          lipo -info Build/Products/Release/truehdd
-          otool -L Build/Products/Release/truehdd
+          xcodebuild -project Swift_TrueHD.xcodeproj -scheme truehdec -configuration Release -destination 'generic/platform=macOS' -derivedDataPath Build/DecoderDerived CONFIGURATION_BUILD_DIR="$PWD/Build/Products/Release" CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -project Swift_TrueHD.xcodeproj -scheme libtruehdec -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath Build/DecoderDerived CONFIGURATION_BUILD_DIR="$PWD/Build/Products/Debug" CODE_SIGNING_ALLOWED=NO build
+          lipo -info Build/Products/Release/truehda
+          lipo -info Build/Products/Release/truehdec
+          otool -L Build/Products/Release/truehdec
       - name: C and C++ policy and renderer tests
         run: |
           cmake -S . -B Build/Portable -DCMAKE_BUILD_TYPE=Release
@@ -37,11 +37,11 @@ jobs:
         run: |
           mkdir -p Build/fixture
           Build/Portable/decoder_tests --generate Build/fixture/source.wav Build/fixture/source
-          Build/Products/Release/turehda -i Build/fixture/source.wav -o Build/fixture/synthetic.mlp
+          Build/Products/Release/truehda -i Build/fixture/source.wav -o Build/fixture/synthetic.mlp
           Build/Portable/decoder_tests --stream Build/fixture/synthetic.mlp Build/fixture/source
-          Build/Products/Release/truehdd -i Build/fixture/synthetic.mlp -o Build/fixture/decoded.pcm --presentation 8 --format s24le
+          Build/Products/Release/truehdec -i Build/fixture/synthetic.mlp -o Build/fixture/decoded.pcm --presentation 8 --format s24le
           cmp Build/fixture/decoded.pcm Build/fixture/source.8.pcm
-          Build/Portable/truehdd play --help
+          Build/Portable/truehdec play --help
       - name: Build independent FFmpeg adapter and run API and FATE tests
         shell: bash
         run: |
@@ -67,10 +67,10 @@ jobs:
         with:
           name: macos-native-products
           path: |
-            Build/Products/Release/turehda
-            Build/Products/Release/truehdd
+            Build/Products/Release/truehda
+            Build/Products/Release/truehdec
             Build/Products/Release/libtruehda.framework
-            Build/Products/Release/libtruehdd.framework
+            Build/Products/Release/libtruehdec.framework
             LICENSE
             LICENSES/
             THIRD_PARTY_NOTICES.md
@@ -93,16 +93,16 @@ jobs:
           ctest --test-dir Build/Portable -C Release --output-on-failure
           & Build/Portable/Release/decoder_tests.exe --stream Build/fixture/synthetic.mlp Build/fixture/source
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & Build/Portable/Release/truehdd.exe -i Build/fixture/synthetic.mlp -o Build/fixture/decoded.pcm --presentation 8 --format s24le
+          & Build/Portable/Release/truehdec.exe -i Build/fixture/synthetic.mlp -o Build/fixture/decoded.pcm --presentation 8 --format s24le
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ((Get-FileHash Build/fixture/decoded.pcm).Hash -ne (Get-FileHash Build/fixture/source.8.pcm).Hash) { throw 'PCM mismatch' }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-decoder-products
           path: |
-            Build/Portable/Release/truehdd.exe
-            Build/Portable/Release/truehdd.dll
-            Build/Portable/Release/truehdd.lib
+            Build/Portable/Release/truehdec.exe
+            Build/Portable/Release/truehdec.dll
+            Build/Portable/Release/truehdec.lib
             Sources/DecoderFramework/include/TrueHDDecoder.h
             Decoder/LICENSE
             LICENSES/LGPL-2.1-or-later.txt
@@ -126,11 +126,11 @@ jobs:
           cmake --build Build/Portable --parallel 3
           ctest --test-dir Build/Portable --output-on-failure
           Build/Portable/decoder_tests --stream Build/fixture/synthetic.mlp Build/fixture/source
-          Build/Portable/truehdd -i Build/fixture/synthetic.mlp -o Build/fixture/decoded.pcm --presentation 8 --format s24le
+          Build/Portable/truehdec -i Build/fixture/synthetic.mlp -o Build/fixture/decoded.pcm --presentation 8 --format s24le
           cmp Build/fixture/decoded.pcm Build/fixture/source.8.pcm
-          test -f Build/Portable/libtruehdd.so
-          nm -D --defined-only Build/Portable/libtruehdd.so | grep 'sthd_player_feed'
-          readelf -d Build/Portable/truehdd | grep 'libtruehdd.so.1'
+          test -f Build/Portable/libtruehdec.so
+          nm -D --defined-only Build/Portable/libtruehdec.so | grep 'sthd_player_feed'
+          readelf -d Build/Portable/truehdec | grep 'libtruehdec.so.1'
       - name: Exercise actual PipeWire playback for all layouts
         run: dbus-run-session -- bash .github/scripts/test-pipewire.sh "$PWD/Build/Portable/audio_smoke" "$PWD/Build/Portable/player_smoke" "$PWD/Build/fixture/synthetic.mlp"
       - name: Address and undefined behavior sanitizers
@@ -165,8 +165,8 @@ jobs:
         with:
           name: linux-decoder-products
           path: |
-            Build/Portable/truehdd
-            Build/Portable/libtruehdd.so*
+            Build/Portable/truehdec
+            Build/Portable/libtruehdec.so*
             Sources/DecoderFramework/include/TrueHDDecoder.h
             Decoder/LICENSE
             LICENSES/LGPL-2.1-or-later.txt
