@@ -254,6 +254,43 @@ STHDStatus sthd_audio_write_motion(STHDAudioOutput *o, const STHDFrame *f,
 } catch (...) {
     return STHD_AUDIO_FAILURE;
 }
+STHDStatus sthd_audio_write_pcm(STHDAudioOutput *o, const float *pcm, uint32_t frames,
+                                size_t capacity, uint32_t timeout) try {
+    if (!o || !pcm || frames < 1 || frames > STHD_MAX_SAMPLES ||
+        o->driver->plan.mode != STHD_AUDIO_PCM || o->ring.draining.load())
+        return STHD_INVALID_ARGUMENT;
+    const size_t count = size_t(frames) * o->ring.channels;
+    if (capacity < count)
+        return STHD_BUFFER_TOO_SMALL;
+    for (size_t i = 0; i < count; ++i)
+        if (!std::isfinite(pcm[i]))
+            return STHD_INVALID_ARGUMENT;
+    if (o->ring.stopping.load())
+        return STHD_CANCELLED;
+    auto failure = o->ring.failure.load();
+    if (failure != STHD_OK)
+        return failure;
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
+    while (!o->ring.push(pcm, frames)) {
+        if (o->ring.stopping.load())
+            return STHD_CANCELLED;
+        failure = o->ring.failure.load();
+        if (failure != STHD_OK)
+            return failure;
+        if (std::chrono::steady_clock::now() >= end)
+            return STHD_TIMEOUT;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (!o->ring.started.load() && o->ring.available() >= 2048) {
+        auto status = o->driver->start();
+        if (status != STHD_OK)
+            return status;
+        o->ring.started.store(true);
+    }
+    return o->ring.failure.load();
+} catch (...) {
+    return STHD_AUDIO_FAILURE;
+}
 STHDStatus sthd_audio_drain(STHDAudioOutput *o, uint32_t timeout) try {
     if (!o)
         return STHD_INVALID_ARGUMENT;

@@ -52,6 +52,18 @@ private struct TurehdaCLI {
             case "--drc-profile":
                 let value = try requiredValue(for: option, at: &index, in: arguments)
                 configuration.drcProfile = try parseDRCProfile(value)
+            case "--prediction":
+                let value = try requiredValue(for: option, at: &index, in: arguments)
+                guard let mode = TrueHDPredictionMode.allCases.first(where: {
+                    $0.commandLineName == value
+                }) else { throw CLIError.unknownOption("--prediction \(value)") }
+                configuration.predictionMode = mode
+            case "--dialnorm":
+                let value = try requiredValue(for: option, at: &index, in: arguments)
+                guard let decibels = Int(value), (-31 ... -1).contains(decibels) else {
+                    throw CLIError.unknownOption("--dialnorm \(value) (expected -31...-1)")
+                }
+                configuration.dialogueNormalization = -decibels
             default:
                 throw CLIError.unknownOption(option)
             }
@@ -155,6 +167,8 @@ private struct TurehdaCLI {
                   --frame-rate RATE            23.976|24|25|29.97|30|47.952|48|50|59.94|60
                   --drc-profile PROFILE        film_standard|film_light|music_standard|
                                                music_light|speech (default: film_light)
+                  --prediction MODE            auto|fir2|fir4|lpc8|none (default: auto)
+                  --dialnorm DB                -31...-1; -31 retains unity decoded level
             """
         )
     }

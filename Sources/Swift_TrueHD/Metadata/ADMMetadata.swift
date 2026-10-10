@@ -28,6 +28,7 @@ struct ADMPositionBlock: Sendable, Equatable {
     let startFrame: UInt64
     let endFrame: UInt64
     let position: ADMPosition
+    let spread: Double
     /// DAMF/IAB position events describe a trajectory between two updates.
     /// ADM XML blocks retain their historical hold semantics unless this flag
     /// is explicitly enabled by the native reader.
@@ -37,12 +38,14 @@ struct ADMPositionBlock: Sendable, Equatable {
         startFrame: UInt64,
         endFrame: UInt64,
         position: ADMPosition,
-        interpolatesToNext: Bool = false
+        interpolatesToNext: Bool = false,
+        spread: Double = 0
     ) {
         self.startFrame = startFrame
         self.endFrame = endFrame
         self.position = position
         self.interpolatesToNext = interpolatesToNext
+        self.spread = min(1, max(0, spread))
     }
 }
 
@@ -93,6 +96,24 @@ struct ADMChannelMetadata: Sendable, Equatable {
             y: from.y + (to.y - from.y) * fraction,
             z: from.z + (to.z - from.z) * fraction
         ).clamped()
+    }
+
+    func spread(at frame: UInt64) -> Double {
+        guard !blocks.isEmpty else { return 0 }
+        var lower = 0, upper = blocks.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if blocks[middle].startFrame <= frame { lower = middle + 1 }
+            else { upper = middle }
+        }
+        let index = max(0, lower - 1)
+        guard index + 1 < blocks.count, blocks[index].interpolatesToNext,
+              blocks[index + 1].startFrame > blocks[index].startFrame,
+              frame < blocks[index + 1].startFrame else { return blocks[index].spread }
+        let fraction = Double(frame - blocks[index].startFrame)
+            / Double(blocks[index + 1].startFrame - blocks[index].startFrame)
+        return blocks[index].spread
+            + (blocks[index + 1].spread - blocks[index].spread) * fraction
     }
 }
 

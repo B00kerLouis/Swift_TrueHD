@@ -3,6 +3,8 @@
 // Builds fixed-point FIR and LPC candidates, then scores the exact residual and
 // signalling cost that the decoder will reconstruct.
 
+import Foundation
+
 struct MLPFIRParameters: Sendable, Equatable {
     let coefficients: [Int32]
     let shift: Int
@@ -47,7 +49,7 @@ enum MLPPredictiveCoding {
         )
     ]
 
-    /// Selects raw or order-1...4 FIR residuals using the full
+    /// Selects raw, order-1...4 fixed FIR and order-1...8 LPC residuals using the full
     /// entropy payload and filter signalling cost. All candidates update the
     /// same original-sample history, matching the MLP decoder's FIR state.
     static func select(
@@ -57,7 +59,8 @@ enum MLPPredictiveCoding {
         activeFIR: MLPFIRParameters?,
         allowPrediction: Bool,
         maximumOrder: Int = 8,
-        includeLPC: Bool = true
+        includeLPC: Bool = true,
+        analysisCandidates: [MLPFIRParameters] = []
     ) -> MLPChannelCodingDecision {
         precondition(inputHistory.count == historyLength)
         let rawEntropy = MLPHuffman.select(
@@ -90,29 +93,32 @@ enum MLPPredictiveCoding {
                     bestFIR = candidate
                 }
             }
-            if includeLPC,
-               let candidate = bestLPCCandidate(
-                   samples: rawSamples,
-                   history: inputHistory,
-                   maximumOrder: maximumOrder
-               ),
-               !candidates.contains(where: {
-                   $0.coefficients == candidate.coefficients && $0.shift == candidate.shift
-               }) {
-                let residuals = apply(
-                    samples: rawSamples, history: inputHistory, filter: candidate
+            if includeLPC {
+                // A bounded interval supplies stable coefficients; short-block
+                // analysis remains available for local changes in the signal.
+                let analyzed = analysisCandidates + lpcCandidates(
+                    samples: rawSamples,
+                    history: inputHistory,
+                    maximumOrder: maximumOrder
                 )
-                let entropy = MLPHuffman.select(
-                    samples: residuals, previousOffset: previousOffset
-                )
-                let cost = entropy.totalBitCount + filterSignallingCost(
-                    selected: candidate, active: activeFIR
-                )
-                if cost < bestCost {
-                    bestCost = cost
-                    bestSamples = residuals
-                    bestEntropy = entropy
-                    bestFIR = candidate
+                for candidate in analyzed where candidate.order <= maximumOrder && !candidates.contains(where: {
+                    $0.coefficients == candidate.coefficients && $0.shift == candidate.shift
+                }) {
+                    let residuals = apply(
+                        samples: rawSamples, history: inputHistory, filter: candidate
+                    )
+                    let entropy = MLPHuffman.select(
+                        samples: residuals, previousOffset: previousOffset
+                    )
+                    let cost = entropy.totalBitCount + filterSignallingCost(
+                        selected: candidate, active: activeFIR
+                    )
+                    if cost < bestCost {
+                        bestCost = cost
+                        bestSamples = residuals
+                        bestEntropy = entropy
+                        bestFIR = candidate
+                    }
                 }
             }
         }
@@ -153,6 +159,23 @@ enum MLPPredictiveCoding {
         writer.write(0, count: 1) // FIR cannot carry explicit state
     }
 
+    /// Analyze one bounded restart interval, independently of codec history.
+    /// Lookahead improves high-order autocorrelation without retaining a whole
+    /// programme. Each quantized candidate still competes on actual block bits.
+    static func analyzeInterval(
+        samples: [Int32], channels: Int, maximumOrder: Int = 8
+    ) -> [[MLPFIRParameters]] {
+        precondition(channels > 0 && samples.count % channels == 0)
+        return (0..<channels).map { channel in
+            let values = stride(from: channel, to: samples.count, by: channels).map { samples[$0] }
+            // Tapering prevents a restart-interval cut from dominating the
+            // high-order autocorrelation. Both analyses compete on original,
+            // untapered PCM, so the window never changes encoded samples.
+            return lpcCandidates(samples: values, history: [], maximumOrder: maximumOrder)
+                + lpcCandidates(samples: values, history: [], maximumOrder: maximumOrder, windowed: true)
+        }
+    }
+
     private static func filterSignallingCost(
         selected: MLPFIRParameters?,
         active: MLPFIRParameters?
@@ -186,18 +209,25 @@ enum MLPPredictiveCoding {
 
     /// Levinson-Durbin LPC analysis with MLP-compatible fixed-point
     /// quantization. Each stable intermediate order is a real coding candidate.
-    private static func bestLPCCandidate(
+    private static func lpcCandidates(
         samples: [Int32],
         history: [Int32],
-        maximumOrder: Int
-    ) -> MLPFIRParameters? {
+        maximumOrder: Int,
+        windowed: Bool = false
+    ) -> [MLPFIRParameters] {
         let orderLimit = min(8, maximumOrder)
-        guard orderLimit > 0 else { return nil }
+        guard orderLimit > 0 else { return [] }
         var signal = [Double]()
         signal.reserveCapacity(history.count + samples.count)
         for sample in history.reversed() { signal.append(Double(sample)) }
         for sample in samples { signal.append(Double(sample)) }
-        guard signal.count > orderLimit else { return nil }
+        guard signal.count > orderLimit else { return [] }
+        if windowed {
+            let denominator = Double(signal.count - 1)
+            for index in signal.indices {
+                signal[index] *= 0.5 - 0.5 * cos(2 * .pi * Double(index) / denominator)
+            }
+        }
 
         var autocorrelation = [Double](repeating: 0, count: orderLimit + 1)
         for lag in 0...orderLimit {
@@ -207,13 +237,12 @@ enum MLPPredictiveCoding {
             }
             autocorrelation[lag] = sum
         }
-        guard autocorrelation[0].isFinite, autocorrelation[0] > 0 else { return nil }
+        guard autocorrelation[0].isFinite, autocorrelation[0] > 0 else { return [] }
 
         var coefficients = [Double]()
         coefficients.reserveCapacity(orderLimit)
         var error = autocorrelation[0]
-        var best: MLPFIRParameters?
-        var bestAbsoluteResidual = UInt64.max
+        var candidates = [MLPFIRParameters]()
         for order in 1...orderLimit {
             var numerator = autocorrelation[order]
             if order > 1 {
@@ -247,16 +276,12 @@ enum MLPPredictiveCoding {
             error *= 1 - reflection * reflection
 
             if let quantized = quantizeLPC(coefficients) {
-                let absoluteResidual = residualMagnitude(
-                    samples: samples, history: history, filter: quantized
-                )
-                if absoluteResidual < bestAbsoluteResidual {
-                    bestAbsoluteResidual = absoluteResidual
-                    best = quantized
-                }
+                // Every quantized order is scored by the same exact Huffman,
+                // offset and filter-signalling cost as raw/fixed FIR candidates.
+                candidates.append(quantized)
             }
         }
-        return best
+        return candidates
     }
 
     private static func updatedHistory(
@@ -276,28 +301,6 @@ enum MLPPredictiveCoding {
             destinationIndex += 1
         }
         return result
-    }
-
-    private static func residualMagnitude(
-        samples: [Int32],
-        history inputHistory: [Int32],
-        filter: MLPFIRParameters
-    ) -> UInt64 {
-        var total: UInt64 = 0
-        for sampleIndex in samples.indices {
-            var accumulation: Int64 = 0
-            for order in 0..<filter.order {
-                let sourceIndex = sampleIndex - order - 1
-                let source = sourceIndex >= 0
-                    ? samples[sourceIndex]
-                    : inputHistory[-sourceIndex - 1]
-                accumulation += Int64(source) * Int64(filter.coefficients[order])
-            }
-            accumulation >>= Int64(filter.shift)
-            let residual = samples[sampleIndex] &- Int32(truncatingIfNeeded: accumulation)
-            total &+= UInt64(residual.magnitude)
-        }
-        return total
     }
 
     private static func quantizeLPC(_ coefficients: [Double]) -> MLPFIRParameters? {

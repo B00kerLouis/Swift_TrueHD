@@ -22,6 +22,8 @@
 		D20000000000000000000051 = { isa = PBXBuildFile; fileRef = D20000000000000000000047; };
 		D20000000000000000000052 = { isa = PBXBuildFile; fileRef = D20000000000000000000048; };
 		D20000000000000000000065 = { isa = PBXBuildFile; fileRef = D20000000000000000000064; };
+		D30000000000000000000011 = { isa = PBXBuildFile; fileRef = D30000000000000000000001; };
+		D30000000000000000000012 = { isa = PBXBuildFile; fileRef = D30000000000000000000002; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -55,6 +57,13 @@
 		D20000000000000000000048 = { isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Sources/DecoderFramework/PipeWireAudio.cpp; sourceTree = "<group>"; };
 		D20000000000000000000049 = { isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Sources/DecoderFramework/AudioBackend.hpp; sourceTree = "<group>"; };
 		D20000000000000000000064 = { isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Sources/DecoderFramework/Player.cpp; sourceTree = "<group>"; };
+		D30000000000000000000001 = { isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = "Sources/DecoderCLI/macos/QCEngine.cpp"; sourceTree = "<group>"; };
+		D30000000000000000000002 = { isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = "Sources/DecoderCLI/macos/QCPlayer.cpp"; sourceTree = "<group>"; };
+		D30000000000000000000003 = { isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Sources/DecoderCLI/macos/QCEngine.hpp"; sourceTree = "<group>"; };
+		D30000000000000000000004 = { isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Sources/DecoderCLI/macos/QCPlayer.hpp"; sourceTree = "<group>"; };
+		D30000000000000000000005 = { isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Sources/DecoderCLI/macos/Info.plist"; sourceTree = "<group>"; };
+		D30000000000000000000006 = { isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "Sources/DecoderCLI/macos/package.sh"; sourceTree = "<group>"; };
+		D30000000000000000000007 = { isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Sources/DecoderCLI/macos/../PCMFile.hpp"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -130,7 +139,7 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		D2000000000000000000001E = { isa = PBXGroup; name = "Decoder Framework (C/C++)"; children = (D20000000000000000000064,D20000000000000000000046,D20000000000000000000047,D20000000000000000000048,D20000000000000000000049,D20000000000000000000001,D20000000000000000000002,D20000000000000000000003,D20000000000000000000004,D20000000000000000000005,D20000000000000000000006,); sourceTree = "<group>"; };
+		D2000000000000000000001E = { isa = PBXGroup; name = "Decoder Framework (C/C++)"; children = (D20000000000000000000064,D30000000000000000000001,D30000000000000000000002,D30000000000000000000003,D30000000000000000000004,D30000000000000000000005,D30000000000000000000006,D30000000000000000000007,D20000000000000000000046,D20000000000000000000047,D20000000000000000000048,D20000000000000000000049,D20000000000000000000001,D20000000000000000000002,D20000000000000000000003,D20000000000000000000004,D20000000000000000000005,D20000000000000000000006,); sourceTree = "<group>"; };
 		D2000000000000000000001F = { isa = PBXGroup; name = "Decoder CLI (C++)"; children = (D20000000000000000000007,); sourceTree = "<group>"; };
 		D20000000000000000000020 = { isa = PBXGroup; name = "Decoder system frameworks"; children = (D2000000000000000000000A,D2000000000000000000000B,); sourceTree = "<group>"; };
 /* End PBXGroup section */
@@ -217,7 +226,7 @@
 			productType = "com.apple.product-type.framework";
 		};
 		D20000000000000000000032 = { isa = PBXNativeTarget; buildConfigurationList = D20000000000000000000040; buildPhases = (D20000000000000000000028,D20000000000000000000029,D2000000000000000000002B,D2000000000000000000002D,); buildRules = (); dependencies = (); name = libtruehdec; productName = libtruehdec; productReference = D20000000000000000000008; productType = "com.apple.product-type.framework"; };
-		D20000000000000000000033 = { isa = PBXNativeTarget; buildConfigurationList = D20000000000000000000041; buildPhases = (D2000000000000000000002A,D2000000000000000000002C,); buildRules = (); dependencies = (D2000000000000000000002F,); name = truehdec; productName = truehdec; productReference = D20000000000000000000009; productType = "com.apple.product-type.tool"; };
+		D20000000000000000000033 = { isa = PBXNativeTarget; buildConfigurationList = D20000000000000000000041; buildPhases = (D2000000000000000000002A,D2000000000000000000002C,D30000000000000000000020,); buildRules = (); dependencies = (D2000000000000000000002F,); name = truehdec; productName = truehdec; productReference = D20000000000000000000009; productType = "com.apple.product-type.tool"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -284,6 +293,20 @@
 		D2000000000000000000002D = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+        D30000000000000000000020 = {
+            isa = PBXShellScriptBuildPhase;
+            buildActionMask = 2147483647;
+            files = ();
+            inputPaths = ("$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)", "$(SRCROOT)/Sources/DecoderCLI/macos/package.sh", "$(SRCROOT)/Sources/DecoderCLI/macos/Info.plist",);
+            outputPaths = ("$(TARGET_BUILD_DIR)/truehdec QC.app/Contents/MacOS/truehdec", "$(TARGET_BUILD_DIR)/truehdec QC.app/Contents/Info.plist",);
+            name = "Package macOS QC application";
+            runOnlyForDeploymentPostprocessing = 0;
+            shellPath = /bin/sh;
+            shellScript = "sh \"$SRCROOT/Sources/DecoderCLI/macos/package.sh\" \"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\" \"$TARGET_BUILD_DIR/truehdec QC.app\" \"$SRCROOT/Sources/DecoderCLI/macos/Info.plist\"\n";
+        };
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		A10000000000000000000007 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -307,7 +330,7 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		D20000000000000000000029 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D20000000000000000000065,D20000000000000000000050,D20000000000000000000051,D20000000000000000000052,D20000000000000000000014,D20000000000000000000015,D20000000000000000000016,D20000000000000000000017, ); runOnlyForDeploymentPostprocessing = 0; };
-		D2000000000000000000002A = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D20000000000000000000019, ); runOnlyForDeploymentPostprocessing = 0; };
+		D2000000000000000000002A = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D20000000000000000000019, D30000000000000000000011, D30000000000000000000012, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -634,8 +657,8 @@
 		};
 		D2000000000000000000003C = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 0; EXCLUDED_SOURCE_FILE_NAMES = PipeWireAudio.cpp; PRODUCT_NAME = libtruehdec; PRODUCT_MODULE_NAME = libtruehdec; PRODUCT_BUNDLE_IDENTIFIER = "Sunyun-Louis.libtruehdec"; MACH_O_TYPE = staticlib; GENERATE_INFOPLIST_FILE = YES; DEFINES_MODULE = YES; MODULEMAP_FILE = "$(SRCROOT)/Sources/DecoderFramework/include/module.modulemap"; SKIP_INSTALL = YES; }; name = Debug; };
 		D2000000000000000000003D = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 3; EXCLUDED_SOURCE_FILE_NAMES = PipeWireAudio.cpp; PRODUCT_NAME = libtruehdec; PRODUCT_MODULE_NAME = libtruehdec; PRODUCT_BUNDLE_IDENTIFIER = "Sunyun-Louis.libtruehdec"; MACH_O_TYPE = staticlib; GENERATE_INFOPLIST_FILE = YES; DEFINES_MODULE = YES; MODULEMAP_FILE = "$(SRCROOT)/Sources/DecoderFramework/include/module.modulemap"; SKIP_INSTALL = YES; }; name = Release; };
-		D2000000000000000000003E = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 0; PRODUCT_NAME = truehdec; }; name = Debug; };
-		D2000000000000000000003F = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 3; PRODUCT_NAME = truehdec; }; name = Release; };
+		D2000000000000000000003E = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 0; OTHER_LDFLAGS = ("-framework", AppKit, "-framework", CoreGraphics, "-lobjc",); PRODUCT_NAME = truehdec; }; name = Debug; };
+		D2000000000000000000003F = { isa = XCBuildConfiguration; buildSettings = { CLANG_CXX_LANGUAGE_STANDARD = "c++17"; CLANG_CXX_LIBRARY = "libc++"; GCC_C_LANGUAGE_STANDARD = c17; MACOSX_DEPLOYMENT_TARGET = 11.0; CODE_SIGNING_ALLOWED = NO; SWIFT_INSTALL_MODULE = NO; ENABLE_MODULE_VERIFIER = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/DecoderFramework/include"; GCC_OPTIMIZATION_LEVEL = 3; OTHER_LDFLAGS = ("-framework", AppKit, "-framework", CoreGraphics, "-lobjc",); PRODUCT_NAME = truehdec; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */

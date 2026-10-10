@@ -306,6 +306,7 @@ private struct DAMFDescriptor {
         let sample: UInt64
         let position: ADMPosition
         let rampLength: UInt64
+        let spread: Double
     }
 
     let audioURL: URL
@@ -490,13 +491,21 @@ private struct DAMFDescriptor {
         var currentSample: UInt64 = 0
         var currentPosition: ADMPosition?
         var currentRampLength: UInt64 = 0
+        var currentSpread = 0.0
+        var spreadChanged = false
+        var previousSpreads = [Int: Double]()
+        var previousPositions = [Int: ADMPosition]()
         func flush() {
-            guard let currentID, let currentPosition else { return }
+            guard let currentID, currentPosition != nil || spreadChanged,
+                  let position = currentPosition ?? previousPositions[currentID] else { return }
             result[currentID, default: []].append(PositionEvent(
                 sample: currentSample,
-                position: currentPosition,
-                rampLength: currentRampLength
+                position: position,
+                rampLength: currentRampLength,
+                spread: currentSpread
             ))
+            previousPositions[currentID] = position
+            previousSpreads[currentID] = currentSpread
         }
         for rawLine in text.split(whereSeparator: { $0.isNewline }) {
             let line = String(rawLine).trimmingCharacters(in: .whitespaces)
@@ -510,6 +519,8 @@ private struct DAMFDescriptor {
                 // sample zero and destroys the original frame trajectory.
                 currentPosition = nil
                 currentRampLength = 0
+                currentSpread = currentID.flatMap { previousSpreads[$0] } ?? 0
+                spreadChanged = false
             } else if line.hasPrefix("samplePos:") {
                 currentSample = UInt64(line.split(separator: ":", maxSplits: 1)[1].trimmingCharacters(in: .whitespaces)) ?? 0
             } else if line.hasPrefix("pos:") {
@@ -525,6 +536,10 @@ private struct DAMFDescriptor {
                     line.split(separator: ":", maxSplits: 1)[1]
                         .trimmingCharacters(in: .whitespaces)
                 ) ?? 0
+            } else if line.hasPrefix("size:") {
+                currentSpread = Double(line.split(separator: ":", maxSplits: 1)[1]
+                    .trimmingCharacters(in: .whitespaces)) ?? 0
+                spreadChanged = true
             }
         }
         flush()
@@ -537,24 +552,24 @@ private struct DAMFDescriptor {
     ) -> [ADMPositionBlock] {
         let sorted = values.sorted { $0.sample < $1.sample }
         guard let first = sorted.first else { return [] }
-        var keyframes: [(UInt64, ADMPosition, Bool)] = [
-            (first.sample, first.position, false)
+        var keyframes: [(UInt64, ADMPosition, Bool, Double)] = [
+            (first.sample, first.position, false, first.spread)
         ]
         for event in sorted.dropFirst() {
             if event.rampLength > 0, event.sample <= UInt64.max - event.rampLength {
                 let previous = keyframes.last!.1
                 if keyframes.last!.0 == event.sample {
-                    keyframes[keyframes.count - 1] = (event.sample, previous, true)
+                    keyframes[keyframes.count - 1] = (event.sample, previous, true, keyframes.last!.3)
                 } else {
-                    keyframes.append((event.sample, previous, true))
+                    keyframes.append((event.sample, previous, true, keyframes.last!.3))
                 }
-                keyframes.append((event.sample + event.rampLength, event.position, false))
+                keyframes.append((event.sample + event.rampLength, event.position, false, event.spread))
             } else if keyframes.last!.0 == event.sample {
-                keyframes[keyframes.count - 1] = (event.sample, event.position, false)
+                keyframes[keyframes.count - 1] = (event.sample, event.position, false, event.spread)
             } else {
                 // A zero ramp is an instantaneous state update, followed by a
                 // hold until this Object's next event.
-                keyframes.append((event.sample, event.position, false))
+                keyframes.append((event.sample, event.position, false, event.spread))
             }
         }
         return keyframes.enumerated().map { index, item in
@@ -562,7 +577,8 @@ private struct DAMFDescriptor {
                 startFrame: item.0,
                 endFrame: index + 1 < keyframes.count ? keyframes[index + 1].0 : .max,
                 position: item.1,
-                interpolatesToNext: item.2
+                interpolatesToNext: item.2,
+                spread: item.3
             )
         }
     }
@@ -661,7 +677,7 @@ private final class MXFIABReader: TrueHDAudioReader {
         )
         frameCount = UInt64(parsedFrames.count * samplesPerFrame)
         sourceFrameRate = firstInfo.frameRate
-        var positions = Array(repeating: [(UInt64, ADMPosition)](), count: 128)
+        var positions = Array(repeating: [(UInt64, ADMPosition, Double)](), count: 128)
         var presentBedChannelIDs = Set(firstInfo.bedChannelIDs)
         var objectSlotByMetaID = [Int: Int]()
         for (index, frame) in parsedFrames.enumerated() {
@@ -683,8 +699,9 @@ private final class MXFIABReader: TrueHDAudioReader {
                 let channel = 10 + slot
                 for update in object.panUpdates {
                     let updateFrame = sampleStart + UInt64(update.sampleOffset)
-                    if positions[channel].last?.1 != update.position {
-                        positions[channel].append((updateFrame, update.position))
+                    if positions[channel].last?.1 != update.position
+                        || positions[channel].last?.2 != update.spread {
+                        positions[channel].append((updateFrame, update.position, update.spread))
                     }
                 }
             }
@@ -770,6 +787,7 @@ private final class MXFIABReader: TrueHDAudioReader {
         let sampleOffset: Int
         let position: ADMPosition
         let gain: Double
+        let spread: Double
     }
 
     private struct IABObject {
@@ -957,15 +975,6 @@ private final class MXFIABReader: TrueHDAudioReader {
             let x = try r.read(16)
             let y = try r.read(16)
             let z = try r.read(16)
-            updates.append(
-                IABPanUpdate(
-                    sampleOffset: sampleOffsets[block],
-                    position: try IABPositionConverter.admPosition(
-                        iabX: x, iabY: y, iabZ: z
-                    ),
-                    gain: gain(prefix: gainPrefix, code: gainCode)
-                )
-            )
             if try r.read(1) == 1 {
                 if try r.read(1) == 1 { _ = try r.read(12) }
                 _ = try r.read(1)
@@ -976,13 +985,23 @@ private final class MXFIABReader: TrueHDAudioReader {
                     if prefix > 1 { _ = try r.read(10) }
                 }
             }
-            let spread = try r.read(2)
-            if spread == 1 { _ = try r.read(8) }
-            else if spread == 2 { _ = try r.read(12) }
-            else if spread == 3 { _ = try r.read(36) }
+            let spreadMode = try r.read(2)
+            let spread: Double
+            switch spreadMode {
+            case 0: spread = Double(try r.read(8)) / 255
+            case 1: spread = 0
+            case 2: spread = Double(try r.read(12)) / 4_095
+            default:
+                throw TrueHDError.unsupportedInput("IAB anisotropic object spread is not supported")
+            }
             _ = try r.read(4)
             let decor = try r.read(2)
             if decor > 1 { _ = try r.read(8) }
+            updates.append(IABPanUpdate(
+                sampleOffset: sampleOffsets[block],
+                position: try IABPositionConverter.admPosition(iabX: x, iabY: y, iabZ: z),
+                gain: gain(prefix: gainPrefix, code: gainCode), spread: spread
+            ))
         }
         return IABObject(metaID: metaID, audioID: audioID, panUpdates: updates)
     }
@@ -1113,7 +1132,7 @@ private final class MXFIABReader: TrueHDAudioReader {
     }
 
     private static func makeBlocks(
-        _ values: [(UInt64, ADMPosition)],
+        _ values: [(UInt64, ADMPosition, Double)],
         interpolate: Bool = false
     ) -> [ADMPositionBlock] {
         let sorted = values.sorted { $0.0 < $1.0 }
@@ -1122,7 +1141,8 @@ private final class MXFIABReader: TrueHDAudioReader {
                 startFrame: item.0,
                 endFrame: index + 1 < sorted.count ? sorted[index + 1].0 : .max,
                 position: item.1,
-                interpolatesToNext: interpolate
+                interpolatesToNext: interpolate,
+                spread: item.2
             )
         }
     }

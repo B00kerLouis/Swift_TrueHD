@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 #include <memory>
 #include <limits>
 #include <new>
@@ -37,6 +38,7 @@ struct Substream {
 };
 struct State {
     STHDPCMChecksum checksum{};
+    STHDPlaybackLevels levels{};
     unsigned presentations = 0;
     unsigned elements = 0;
     uint64_t samples = 0;
@@ -621,18 +623,26 @@ static size_t major_sync(State &s, const uint8_t *p, size_t bytes) {
               "unsupported major-sync substream count");
     const bool immersive = presentations == 4;
     supported(extended_info == (immersive ? 3U : 0U) &&
-                  substream_info == (immersive ? 0xfcU : 0x3cU),
+                  (immersive ? substream_info == 0xfcU :
+                               (substream_info == 0x3cU || substream_info == 0x7cU)),
               "unsupported major-sync presentation flags");
     supported(extension == immersive && (!extension || extensions == 1),
               "unsupported major-sync extension configuration");
     supported(((flags & 0x1000) != 0) == immersive,
               "unsupported major-sync Evolution flag");
+    STHDPlaybackLevels levels{};
+    h.skip(6 + 4 + 7); // Heavy/startup DRC and stereo control; not applied.
+    levels.dialnorm[0] = h.read(6);
+    h.skip(6);
+    levels.dialnorm[1] = h.read(5);
+    h.skip(6 + 5);
+    levels.dialnorm[2] = h.read(5);
+    h.skip(6 + 6 + 1 + 1);
     unsigned elements = 0;
     if (extension) {
-        h.skip(32);
-        h.skip(32); // Remaining fixed channel-meaning/DRC fields.
         require(h.read(4) == extensions, "major-sync extension count mismatch");
-        h.skip(11); // Dialogue normalization and mix level.
+        levels.dialnorm[3] = h.read(5);
+        h.skip(6);
         elements = h.read(5) + 1;
         supported(elements == 12 || elements == 14 || elements == 16,
                   "unsupported major-sync element count");
@@ -644,6 +654,10 @@ static size_t major_sync(State &s, const uint8_t *p, size_t bytes) {
                   "presentation topology changed midstream");
     s.presentations = presentations;
     s.elements = elements;
+    levels.valid_presentations = (1U << presentations) - 1;
+    for (unsigned i = 0; i < presentations; ++i)
+        levels.gain[i] = float(std::pow(10.0, (double(levels.dialnorm[i]) - 31) / 20));
+    s.levels = levels;
     return size;
 }
 
@@ -795,6 +809,16 @@ STHDDecoder *sthd_decoder_create(void) {
     } catch (...) {
         return nullptr;
     }
+}
+STHDDecoder *sthd_decoder_clone(const STHDDecoder *source) try {
+    static_assert(sizeof(STHDDecoder) <= 65536, "decoder checkpoint memory bound");
+    return source ? new STHDDecoder(*source) : nullptr;
+} catch (...) { return nullptr; }
+STHDStatus sthd_decoder_playback_levels(const STHDDecoder *d, STHDPlaybackLevels *levels) {
+    if (!d || !levels) return STHD_INVALID_ARGUMENT;
+    if (!d->state.levels.valid_presentations) return STHD_NEED_RESTART;
+    *levels = d->state.levels;
+    return STHD_OK;
 }
 void sthd_decoder_destroy(STHDDecoder *d) { delete d; }
 void sthd_decoder_reset(STHDDecoder *d) {

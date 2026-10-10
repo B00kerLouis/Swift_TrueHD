@@ -70,6 +70,8 @@ enum EncodingCompanionWriter {
           Spatial clusters: \(result.spatialClusterCount == 0 ? "not applicable" : String(result.spatialClusterCount))
           Frame-rate selection: \(frameRateSelectionName(configuration.frameRate))
           DRC profile: \(result.drcProfile.commandLineName)
+          Prediction search: \(configuration.predictionMode.commandLineName)
+          Dialnorm override: \(configuration.dialogueNormalization == 0 ? "default" : "-\(configuration.dialogueNormalization)")
 
         Automatic compliance policy
           Profile: \(profileName(result.profile))
@@ -121,6 +123,8 @@ enum EncodingCompanionWriter {
         options.addChild(element("frame-rate", result.outputFrameRate?.displayName ?? "not_indicated"))
         options.addChild(element("frame-rate-selection", frameRateSelectionName(configuration.frameRate)))
         options.addChild(element("drc-profile", result.drcProfile.commandLineName))
+        options.addChild(element("prediction-search", configuration.predictionMode.commandLineName))
+        options.addChild(element("dialnorm-override", configuration.dialogueNormalization == 0 ? "default" : "-\(configuration.dialogueNormalization)"))
         root.addChild(options)
 
         let compliance = XMLElement(name: "automatic-compliance")

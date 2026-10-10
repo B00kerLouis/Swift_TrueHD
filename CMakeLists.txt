@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 cmake_minimum_required(VERSION 3.16)
-project(TrueHDDecoder VERSION 1.4.1 LANGUAGES C CXX)
+project(TrueHDDecoder VERSION 1.4.2 LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -68,6 +68,14 @@ add_executable(truehdec Sources/DecoderCLI/main.cpp)
 target_link_libraries(truehdec PRIVATE libtruehdec)
 set_target_properties(truehdec PROPERTIES OUTPUT_NAME truehdec)
 if(APPLE)
+    target_sources(truehdec PRIVATE Sources/DecoderCLI/macos/QCEngine.cpp
+        Sources/DecoderCLI/macos/QCPlayer.cpp)
+    target_link_libraries(truehdec PRIVATE "-framework AppKit" "-framework CoreGraphics" objc)
+    add_custom_command(TARGET truehdec POST_BUILD
+        COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/Sources/DecoderCLI/macos/package.sh"
+            "$<TARGET_FILE:truehdec>" "${CMAKE_CURRENT_BINARY_DIR}/truehdec QC.app"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Sources/DecoderCLI/macos/Info.plist"
+        VERBATIM)
     set_target_properties(truehdec PROPERTIES INSTALL_RPATH "@loader_path/../lib")
 elseif(UNIX)
     set_target_properties(truehdec PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
@@ -97,6 +105,14 @@ if(STHD_BUILD_TESTS)
     target_link_libraries(player_smoke PRIVATE libtruehdec)
     add_executable(audio_smoke DecoderTests/audio_smoke.cpp)
     target_link_libraries(audio_smoke PRIVATE libtruehdec)
+    if(APPLE)
+        add_executable(qc_engine_tests DecoderTests/qc_engine_tests.cpp
+            Sources/DecoderCLI/macos/QCEngine.cpp)
+        target_link_libraries(qc_engine_tests PRIVATE libtruehdec)
+        add_test(NAME decoder_qc_engine COMMAND qc_engine_tests
+            "${CMAKE_CURRENT_SOURCE_DIR}/Integrations/FFmpeg/fixtures/synthetic-16.mlp"
+            "${CMAKE_CURRENT_BINARY_DIR}/QCValidation")
+    endif()
 endif()
 install(TARGETS libtruehdec truehdec ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 if(STHD_BUILD_FUZZER)

@@ -176,7 +176,19 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         let selectedCentres = heightIndices.map { Self.heightCentres[$0] }
         clusterCentres = selectedCentres
         matrixRenderCoefficients = selectedCentres.map {
-            AtmosCompatibilityMatrix.renderCoefficients(for: $0)
+            let render = AtmosCompatibilityMatrix.renderCoefficients(for: $0)
+            // The compatibility matrices trim the side and rear planes. Undo
+            // that trim in the shared fold so height is attenuated only once.
+            return render.enumerated().map { speaker, coefficient in
+                let trim: Int64
+                switch speaker {
+                case 4, 5: trim = AtmosCompatibilityMatrix.sideCoefficient
+                case 6, 7: trim = AtmosCompatibilityMatrix.rearCoefficient
+                default: trim = AtmosCompatibilityMatrix.scale
+                }
+                return Int32((Double(coefficient) * Double(AtmosCompatibilityMatrix.scale)
+                    / Double(trim)).rounded())
+            }
         }
     }
 
@@ -492,7 +504,9 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         return [
             AtmosMetadataUpdate(
                 blockOffsetFactor: 0,
-                rampDuration: firstFrame ? 0 : Int(frameEnd - frameStart),
+                // The initial state uses the same ramp as later metadata.
+                // DRP starts its object renderer from its default coordinates.
+                rampDuration: Int(frameEnd - frameStart),
                 positions: positions(at: firstFrame ? frameStart : frameEnd)
             )
         ]
@@ -827,8 +841,8 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         let item = metadata.channels[channel]
         if !item.blocks.isEmpty { return item.position(at: frame) }
         switch item.channelFormatID {
-        case "AC_00011009": return ADMPosition(x: -0.7, y: 0, z: 0.8)
-        case "AC_0001100a": return ADMPosition(x: 0.7, y: 0, z: 0.8)
+        case "AC_00011009": return ADMPosition(x: -1, y: 0, z: 1)
+        case "AC_0001100a": return ADMPosition(x: 1, y: 0, z: 1)
         default: return .centre
         }
     }

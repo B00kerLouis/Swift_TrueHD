@@ -161,6 +161,37 @@ public enum TrueHDOutputFrameRate: Int, Sendable, CaseIterable {
     }
 }
 
+/// Prediction search caps. Auto compares complete FIR2/FIR4/LPC8 restart
+/// intervals for Atmos; each mode still permits raw PCM when it costs less.
+@objc(STTrueHDPredictionMode)
+public enum TrueHDPredictionMode: Int, Sendable, CaseIterable {
+    case auto, fir2, fir4, lpc8, none
+
+    public var commandLineName: String {
+        switch self {
+        case .auto: "auto"
+        case .fir2: "fir2"
+        case .fir4: "fir4"
+        case .lpc8: "lpc8"
+        case .none: "none"
+        }
+    }
+
+    var maximumOrder: Int {
+        switch self {
+        case .fir2: 2
+        case .fir4: 4
+        case .none: 0
+        case .auto, .lpc8: 8
+        }
+    }
+
+    var includesLPC: Bool { self == .auto || self == .lpc8 }
+    var intervalCandidates: [TrueHDPredictionMode] {
+        self == .auto ? [.fir2, .fir4, .lpc8] : [self]
+    }
+}
+
 @objc(STTrueHDEncoderConfiguration)
 @objcMembers
 public final class TrueHDEncoderConfiguration: NSObject, NSCopying, @unchecked Sendable {
@@ -168,19 +199,45 @@ public final class TrueHDEncoderConfiguration: NSObject, NSCopying, @unchecked S
     public var firstFrameOfAction: String
     public var frameRate: TrueHDOutputFrameRate
     public var drcProfile: TrueHDDRCProfile
+    public var predictionMode: TrueHDPredictionMode
+    /// Positive dialnorm magnitude (1...31); zero preserves the established
+    /// stereo -30 / multichannel -24 defaults. A value of 31 is unity in DRP.
+    public var dialogueNormalization: Int
 
     public override convenience init() { self.init(spatialClusterCount: 16) }
+
+    // Preserve the original Objective-C initializer selector while extending
+    // Swift configuration with optional prediction and dialnorm controls.
+    public convenience init(
+        spatialClusterCount: Int,
+        firstFrameOfAction: String,
+        frameRate: TrueHDOutputFrameRate,
+        drcProfile: TrueHDDRCProfile
+    ) {
+        self.init(
+            spatialClusterCount: spatialClusterCount,
+            firstFrameOfAction: firstFrameOfAction,
+            frameRate: frameRate,
+            drcProfile: drcProfile,
+            predictionMode: .auto,
+            dialogueNormalization: 0
+        )
+    }
 
     public init(
         spatialClusterCount: Int = 16,
         firstFrameOfAction: String = "00:00:00:00",
         frameRate: TrueHDOutputFrameRate = .input,
-        drcProfile: TrueHDDRCProfile = .filmLight
+        drcProfile: TrueHDDRCProfile = .filmLight,
+        predictionMode: TrueHDPredictionMode = .auto,
+        dialogueNormalization: Int = 0
     ) {
         self.spatialClusterCount = spatialClusterCount
         self.firstFrameOfAction = firstFrameOfAction
         self.frameRate = frameRate
         self.drcProfile = drcProfile
+        self.predictionMode = predictionMode
+        self.dialogueNormalization = dialogueNormalization
     }
 
     public func copy(with zone: NSZone? = nil) -> Any {
@@ -188,7 +245,9 @@ public final class TrueHDEncoderConfiguration: NSObject, NSCopying, @unchecked S
             spatialClusterCount: spatialClusterCount,
             firstFrameOfAction: firstFrameOfAction,
             frameRate: frameRate,
-            drcProfile: drcProfile
+            drcProfile: drcProfile,
+            predictionMode: predictionMode,
+            dialogueNormalization: dialogueNormalization
         )
     }
 }

@@ -120,6 +120,22 @@ STHD_API STHDStatus sthd_decoder_pcm_checksum(const STHDDecoder *decoder, STHDPC
 STHD_API STHDDecoder *sthd_decoder_create(void);
 STHD_API void sthd_decoder_destroy(STHDDecoder *decoder);
 STHD_API void sthd_decoder_reset(STHDDecoder *decoder);
+/* Independent fixed-size copy of the complete decoder/filter/OAMD/CRC policy
+   state. Serialize access to source while cloning. The returned instance is
+   separately serialized and destroyed normally; NULL on invalid source/OOM.
+   Hosts cap checkpoint counts and associate them with their input byte offset. */
+STHD_API STHDDecoder *sthd_decoder_clone(const STHDDecoder *source);
+typedef struct STHDPlaybackLevels {
+    uint32_t valid_presentations;
+    /* Transmitted positive dialnorm magnitude; stereo can carry 6 bits.
+       gain_db = dialnorm - 31, including admitted stereo mix compensation. */
+    uint32_t dialnorm[4];
+    float gain[4];
+} STHDPlaybackLevels;
+/* Copied channel-meaning view, available after successful major sync. Decode
+   remains raw PCM; players explicitly opt into these presentation gains. */
+STHD_API STHDStatus sthd_decoder_playback_levels(const STHDDecoder *decoder,
+                                                STHDPlaybackLevels *levels);
 STHD_API const char *sthd_decoder_error(const STHDDecoder *decoder);
 /* True only after a validated explicit stream terminator, including zero trim.
    Ordinary host EOF is separate. Decode failures preserve it; reset clears it.
@@ -232,6 +248,13 @@ STHD_API STHDStatus sthd_audio_write(STHDAudioOutput *output, const STHDFrame *f
 STHD_API STHDStatus sthd_audio_write_motion(STHDAudioOutput *output, const STHDFrame *frame,
                                             const STHDFrameMotion *motion, float gain,
                                             uint32_t timeout_ms);
+/* Already-rendered normalized float PCM in the plan's physical channel order.
+   PCM mode only, 48 kHz, 1..40 frames; capacity counts float samples. No hidden
+   downmix, gain or limiter. The host measures clipping before submission.
+   TIMEOUT enqueues nothing: retry the same complete block. Other producer
+   calls/destruction are serialized; cancel may run concurrently. */
+STHD_API STHDStatus sthd_audio_write_pcm(STHDAudioOutput *output, const float *interleaved,
+                                       uint32_t frames, size_t capacity, uint32_t timeout_ms);
 STHD_API STHDStatus sthd_audio_drain(STHDAudioOutput *output, uint32_t timeout_ms);
 typedef struct STHDAudioStats {
     uint64_t submitted_frames, consumed_frames, underruns;

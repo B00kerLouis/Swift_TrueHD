@@ -4,9 +4,21 @@
 #include <array>
 #include <cmath>
 #include <cstring>
-#include <vector>
+
 namespace {
 constexpr double half_pi = 1.57079632679489661923;
+template<class T> struct SpeakerList {
+    std::array<T, 16> data{};
+    size_t count = 0;
+    void push_back(T value) { data[count++] = value; }
+    bool empty() const { return count == 0; }
+    size_t size() const { return count; }
+    T *begin() { return data.data(); }
+    T *end() { return data.data() + count; }
+    const T &front() const { return data[0]; }
+    const T &back() const { return data[count-1]; }
+    T &operator[](size_t i) { return data[i]; }
+};
 struct SpeakerPosition {
     double x, y, z;
 };
@@ -80,7 +92,7 @@ void plane_gains(const STHDLayout &l, STHDPosition p, bool top, double weight,
         if (l.speakers[i] <= STHD_SR)
             ++floor_channels;
     const bool five = floor_channels == 6;
-    std::vector<double> rows;
+    SpeakerList<double> rows;
     for (unsigned i = 0; i < l.channels; ++i)
         if (l.speakers[i] != STHD_LFE) {
             auto s = position(l.speakers[i], five);
@@ -102,7 +114,7 @@ void plane_gains(const STHDLayout &l, STHDPosition p, bool top, double weight,
     for (unsigned which = 0; which < (a == b ? 1U : 2U); ++which) {
         size_t row = which ? b : a;
         double w = weight * (a == b ? 1 : (which ? std::sin(t * half_pi) : std::cos(t * half_pi)));
-        std::vector<unsigned> indices;
+        SpeakerList<unsigned> indices;
         for (unsigned i = 0; i < l.channels; ++i)
             if (l.speakers[i] != STHD_LFE) {
                 auto s = position(l.speakers[i], five);

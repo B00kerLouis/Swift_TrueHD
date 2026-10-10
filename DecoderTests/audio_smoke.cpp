@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 #include "TrueHDDecoder.h"
+#include <array>
+#include <limits>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -39,8 +41,17 @@ int main(int argc, char **argv) {
     }
     // Silence verifies actual native scheduling, channel negotiation, and drain
     // without producing an audible signal on the user's default device.
+    std::array<float, 640> pcm{};
+    if (sthd_audio_write_pcm(out.get(), pcm.data(), 0, pcm.size(), 0) != STHD_INVALID_ARGUMENT ||
+        sthd_audio_write_pcm(out.get(), pcm.data(), 40, 1, 0) != STHD_BUFFER_TOO_SMALL)
+        return 7;
+    pcm[0] = std::numeric_limits<float>::quiet_NaN();
+    if (sthd_audio_write_pcm(out.get(), pcm.data(), 40, pcm.size(), 0) != STHD_INVALID_ARGUMENT)
+        return 8;
+    pcm[0] = 0;
     for (unsigned i = 0; i < 1200; ++i) {
-        status = sthd_audio_write(out.get(), &frame, 0, 5000);
+        status = i & 1 ? sthd_audio_write(out.get(), &frame, 0, 5000)
+                       : sthd_audio_write_pcm(out.get(), pcm.data(), 40, pcm.size(), 5000);
         if (status != STHD_OK) {
             std::cerr << sthd_status_string(status) << "\n";
             return 4;

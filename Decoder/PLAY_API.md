@@ -1,5 +1,23 @@
 # Real-time encoded playback API (C ABI v3)
 
+Decoder 1.4.2 also exposes `sthd_audio_write_pcm` for hosts that have already
+rendered their monitoring PCM. This is an additive C ABI v3 function, supported
+on all native PCM backends. Input is finite, normalized, interleaved float PCM
+at 48 kHz in the output plan's physical channel order, with 1..40 frames and a
+capacity measured in float samples. It applies no gain, downmix or limiter.
+Only PCM plans are accepted. Hosts report clipping and decide how to limit.
+`STHD_TIMEOUT` enqueues no part of a block; retry the identical complete block.
+Producer calls and close remain serialized; atomic cancellation may run
+concurrently. The encoded-input player's pending-frame/consumed-byte and EOS
+contracts are unchanged.
+
+On macOS, CLI `--play` opens the C++ AppKit QC player. `play` remains headless;
+Windows/Linux `--play` behavior is unchanged. The GUI decodes complete AUs with
+its own serialized decoder, renders virtual QC channels, then submits the
+explicit direct/downmix/Solo monitoring result with `sthd_audio_write_pcm`.
+The QC layout does not describe the device. Seeking replays stream history
+and discards queued monitoring audio; file export uses an independent decoder.
+
 `sthd_player_*` combines the existing decoder, presentation/renderer and native audio backend. It accepts arbitrary TrueHD elementary-stream byte chunks, including partial four-byte headers, partial access units and many access units in one call. It does not require an intermediate PCM file, aligned caller input, or a second decoder.
 
 ## Lifecycle
@@ -143,3 +161,20 @@ pending frame on timeout, and still requires finish/drain to complete playback.
 CLI rejects trailing file data after any terminator and keeps its existing
 output cleanup behavior. Version 1.4.1 handles both the explicit trim form and
 the repeated termination-word form without removing valid PCM samples.
+
+
+## Complete decoder checkpoints and playback metadata
+
+`sthd_decoder_clone` returns an independently owned fixed-size copy, including
+filter history, OAMD ramp origins/targets/pending updates, checksums, EOS and
+strict-check policy. Serialize the source during cloning; independently
+serialize and destroy the returned context. NULL source/allocation failure
+returns NULL. Hosts associate clones with byte/sample offsets and cap counts.
+The GUI prepares at most 128 checkpoints and restores exact state before replay.
+
+`sthd_decoder_playback_levels` returns a copied `STHDPlaybackLevels` view after
+successful major sync, or `STHD_NEED_RESTART` before it. Reset clears the view;
+failed decoding preserves it transactionally. Dialnorm/gains are reported for
+all admitted presentations and never applied to public decoded PCM. Both
+functions are additive C ABI v3 extensions. The encoded player's consumed-byte,
+pending-frame, cancellation and termination contracts are unchanged.

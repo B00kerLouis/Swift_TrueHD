@@ -54,6 +54,10 @@ applying DRC by default.
 
 ## Substreams and prediction
 
+Plain three-substream streams admit the DEE/DRP `substream_info=0x7C`
+presentation mask. The current encoder emits it; the portable decoder also
+retains legacy `0x3C` compatibility.
+
 Each block starts with parameter-present and restart-present flags. Restart
 types are `0x31EA` (stereo), `0x31EB` (six/eight channels) and `0x31EC`
 (immersive). A restart includes channel ranges, the generator seed, the

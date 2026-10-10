@@ -4,7 +4,15 @@
 Build/
 DerivedData/
 tmp/
-Tests/
+# Publish only the Swift regression test sources, keeping local fixtures private.
+Tests/*
+!Tests/SwiftTrueHDTests/
+Tests/SwiftTrueHDTests/*
+!Tests/SwiftTrueHDTests/*.swift
+
+# Local investigation reports and measurements.
+Decoder/QC_VALIDATION.md
+Encoder/PREDICTION_RESEARCH.md
 
 *.xcuserstate
 **/xcuserdata/

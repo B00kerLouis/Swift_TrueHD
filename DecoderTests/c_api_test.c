@@ -1,6 +1,11 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #include "TrueHDDecoder.h"
 int sthd_c_header_test(void) {
+    if (sthd_audio_write_pcm(0, 0, 0, 0, 0) != STHD_INVALID_ARGUMENT)
+        return 0;
+    if (sthd_decoder_clone(0) != 0) return 0;
+    STHDPlaybackLevels levels = {0};
+    if (sthd_decoder_playback_levels(0, &levels) != STHD_INVALID_ARGUMENT) return 0;
     STHDLayout layout;
     STHDPlayerOptions options = {0};
     char error[256];
@@ -25,6 +30,10 @@ int sthd_c_header_test(void) {
     STHDDecoder *decoder = sthd_decoder_create();
     if (!decoder)
         return 0;
+    if (sthd_decoder_playback_levels(decoder, &levels) != STHD_NEED_RESTART) return 0;
+    STHDDecoder *cloned = sthd_decoder_clone(decoder);
+    if (!cloned || sthd_decoder_playback_levels(cloned, &levels) != STHD_NEED_RESTART) return 0;
+    sthd_decoder_destroy(cloned);
     if (sthd_decoder_drc_valid(decoder) != 0 || sthd_decoder_drc_valid(0) != 0) {
         sthd_decoder_destroy(decoder);
         return 0;

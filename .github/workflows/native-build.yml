@@ -28,6 +28,9 @@ jobs:
           lipo -info Build/Products/Release/truehda
           lipo -info Build/Products/Release/truehdec
           otool -L Build/Products/Release/truehdec
+      - name: Build and run Swift test target
+        run: |
+          xcodebuild -project Swift_TrueHD.xcodeproj -scheme SwiftTrueHDTests -configuration Debug -destination 'platform=macOS' -derivedDataPath Build/EncoderTestsDerived -resultBundlePath Build/EncoderTests.xcresult CODE_SIGNING_ALLOWED=NO test
       - name: C and C++ policy and renderer tests
         run: |
           cmake -S . -B Build/Portable -DCMAKE_BUILD_TYPE=Release
@@ -64,6 +67,12 @@ jobs:
             Build/fixture/source.8.pcm
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-swift-test-results
+          path: Build/EncoderTests.xcresult
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
         with:
           name: macos-native-products
           path: |
@@ -71,6 +80,7 @@ jobs:
             Build/Products/Release/truehdec
             Build/Products/Release/libtruehda.framework
             Build/Products/Release/libtruehdec.framework
+            Build/Products/Release/truehdec QC.app/
             LICENSE
             LICENSES/
             THIRD_PARTY_NOTICES.md

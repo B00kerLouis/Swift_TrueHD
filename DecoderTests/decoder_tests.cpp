@@ -271,6 +271,12 @@ void major_header_tests(const std::vector<uint8_t> &first) {
     rejected(changed, original_size, "valid CRC with unsupported presentation flags rejected");
     if (original_size == 28) {
         changed = first;
+        changed[21] = 0x7c; // DEE/DRP three-audio-substream presentation.
+        seal_major(changed, original_size);
+        sthd_decoder_reset(d.get());
+        expect(sthd_decode_access_unit(d.get(), changed.data(), changed.size(), &frame) == STHD_OK,
+               "three-audio-substream major sync accepted");
+        changed = first;
         changed.insert(changed.begin() + 30, 2, 0);
         changed[29] |= 1;
         changed[30] = 0; // Extension present, zero extension pairs: actual size 30.
@@ -554,9 +560,31 @@ void stream_tests(const std::filesystem::path &path, const std::string &prefix) 
         auto bytes = read_au(in);
         if (bytes.empty())
             break;
+        std::unique_ptr<STHDDecoder, decltype(&sthd_decoder_destroy)> checkpoint(
+            au % 97 == 0 ? sthd_decoder_clone(d) : nullptr, sthd_decoder_destroy);
+        if (au % 97 == 0) expect(bool(checkpoint), "clone complete decoder state");
         auto s = sthd_decode_access_unit(d, bytes.data(), bytes.size(), &f);
         expect(s == STHD_OK, "decode AU " + std::to_string(au) + ": " + sthd_decoder_error(d));
         expect(f.first_sample == samples, "continuous sample timeline");
+        if (checkpoint) {
+            STHDFrame copy{}; STHDFrameMotion a{}, b{};
+            expect(sthd_decode_access_unit(checkpoint.get(), bytes.data(), bytes.size(), &copy) == STHD_OK,
+                   "decode after complete-state clone");
+            expect(copy.first_sample == f.first_sample && copy.samples == f.samples &&
+                   std::memcmp(copy.pcm, f.pcm, sizeof(f.pcm)) == 0 &&
+                   std::memcmp(copy.positions, f.positions, sizeof(f.positions)) == 0,
+                   "checkpoint PCM and coordinates equal continuous decode");
+            sthd_decoder_motion(d, &a); sthd_decoder_motion(checkpoint.get(), &b);
+            expect(a.valid_samples == b.valid_samples &&
+                   std::memcmp(a.positions, b.positions, sizeof(a.positions)) == 0,
+                   "checkpoint preserves pending OAMD ramp origins");
+            STHDPlaybackLevels original{}, cloned{};
+            expect(sthd_decoder_playback_levels(d, &original) == STHD_OK &&
+                   sthd_decoder_playback_levels(checkpoint.get(), &cloned) == STHD_OK &&
+                   std::memcmp(original.dialnorm, cloned.dialnorm, sizeof(original.dialnorm)) == 0,
+                   "checkpoint preserves playback metadata");
+        }
+
         if (bytes.size() >= 8 && bytes[4] == 0xf8 && bytes[5] == 0x72 &&
             bytes[6] == 0x6f && bytes[7] == 0xba) {
             sthd_decoder_reset(seeking.get());

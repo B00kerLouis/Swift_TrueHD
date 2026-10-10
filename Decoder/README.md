@@ -79,10 +79,65 @@ If an entire random-access segment receives no OAMD, `positionsValid=false`
 and coordinates and LFE/object labels are omitted. Element PCM and order are
 retained; initialized zero arrays are not presented as real coordinates.
 
-`--format s24le` writes headerless packed PCM. `--play` uses the independent
-native backend. CoreAudio, WASAPI/Windows Spatial Audio and PipeWire handle
+`--format s24le` writes headerless packed PCM. On macOS, `--play` opens the QC
+GUI; on Windows/Linux it retains native terminal playback. The `play` subcommand
+uses the independent native backend on every platform. CoreAudio,
+WASAPI/Windows Spatial Audio and PipeWire handle
 system negotiation and scheduling; ordinary Windows PCM does not enter the
 Spatial pipeline. See [native audio architecture](AUDIO_ARCHITECTURE.md).
+
+## macOS QC player
+
+```sh
+Build/Products/Release/truehdec --play INPUT.mlp
+Build/Products/Release/truehdec --play -i INPUT.mlp --layout 7.1.4
+Build/Products/Release/truehdec --play
+Build/Products/Release/truehdec play -i INPUT.mlp
+```
+
+Double-click `Build/Products/Release/truehdec QC.app` to open the same dark
+player. Controls provide play/pause, stop, ten-second skips, seek, monitoring
+volume, Peak/RMS meters, peak hold, Solo, nine QC layouts and cancellable PCM
+export. There is no 7.1.5 preset. Labels use `L R C LFE Ls Rs Lrs Rrs`, heights
+`Ltf Rtf Ltm Rtm Ltr Rtr`, and wides `Lw Rw`. The display uses side-before-rear
+order while raw compatibility PCM retains
+WAVE order; the two-height preset retains top-middle feeds.
+
+QC layouts are independent of the output endpoint. A stereo device can inspect
+and export 7.1.4, 7.1.6 or 9.1.6. **Direct Channels (No Downmix)** monitors only
+matching physical positions. **Downmix to Device** explicitly folds the virtual
+QC channels. **QC Meters Only** disables device output. Solo auditions the chosen
+feed through front L/R, including LFE only when the user explicitly solos it.
+Ordinary folds route LFE solely to an existing LFE output. Unmatched heights
+remain in QC PCM; front-wide feeds may remain silent with the current basis.
+Unknown endpoint labels stop monitoring with an error; use QC meters or the
+headless command's explicit physical layout. Device descriptions are available
+in the Monitoring control's tooltip.
+
+The UI refreshes at 30 Hz. Dragging seek previews the position and performs one
+seek on mouse release. Initial duration measurement validates the complete
+stream on a worker. Seeking restores a bounded complete-state checkpoint and
+replays the remaining interval to recover filter and OAMD state; requests are cancellable. Pause/layout
+changes discard queued monitoring audio and resume from the displayed sample.
+The worker keeps one AU and bounded PCM buffers; no whole-programme PCM cache,
+SwiftData or database is used. Main-thread commands publish intent; decoder
+and native output calls remain serialized. The default playback meter applies
+transmitted presentation dialnorm with DRC disabled; encoded-PCM mode uses unity gain. Meter values precede monitor volume;
+QC and DAC clipping and PCM-check mismatches are reported separately.
+
+Export chooses native 7.1/Atmos element PCM or the current QC layout, in
+24-bit RIFF/RF64, S24LE, left-aligned S32LE or Float32LE. Float export retains
+rendered values beyond full scale; integer exports report clipping before
+limiting. Monitor gain and Solo do not affect export. Each destination has a
+channel-order sidecar and native element exports retain OAMD targets/ramps and
+the last valid position snapshot. Existing outputs are refused. Cancellation,
+decode/I/O failure and normal SIGINT/SIGTERM remove newly-created incomplete
+outputs; abrupt termination can leave partial files.
+
+The application uses only C++ and the system AppKit/CoreGraphics runtime
+boundary. Its files and linker dependencies are added exclusively on macOS.
+The static decoder framework is linked into the packaged app, so no encoder or
+external framework is required. macOS CMake also creates `truehdec QC.app`.
 
 ## Windows / Linux / C++ builds
 
@@ -199,3 +254,10 @@ Startup/seek ramps with missing origins retain targets and mark coordinates
 unavailable until determined. Ordinary core-channel playback remains usable;
 positional rendering requires preroll. Encoder sources and the Xcode build
 graph remain unchanged.
+
+Layouts without heights meter the encoded compatibility presentation (LFE
+slot 3); height layouts render positional elements (LFE element 0). Compare
+like presentations with DRC disabled and the same dialnorm policy. Rendered
+levels allow ±0.5 dB relative to Dolby; encoded-element PCM validation remains
+exact. Missing ramp origins are reported explicitly until positions become
+available. Detailed research reports and programme measurements stay local.

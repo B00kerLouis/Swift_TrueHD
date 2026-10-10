@@ -20,6 +20,9 @@ public final class TrueHDEncoder: Sendable {
             )
         }
         let configuration = configuration.copy() as! TrueHDEncoderConfiguration
+        guard (0...31).contains(configuration.dialogueNormalization) else {
+            throw TrueHDError.invalidConfiguration("Dialogue normalization must be 0 (default) or 1...31")
+        }
         guard !FileManager.default.fileExists(atPath: outputURL.path) else {
             throw TrueHDError.outputExists(outputURL)
         }

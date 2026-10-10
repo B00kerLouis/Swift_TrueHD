@@ -59,3 +59,40 @@ Decoder 1.4.1 tracks explicit termination independently of sample shortening.
 and repeated-word termination while preserving 40 valid PCM samples. Reset
 clears decoder EOS; ordinary host EOF remains separate. Preserve the existing
 pending-frame retry and consumed-byte contracts when handling EOS.
+
+Decoder 1.4.2 adds a macOS-only QC GUI under `Sources/DecoderCLI/macos`.
+`--play` opens the AppKit player; the `play` subcommand remains headless on all
+platforms. Xcode and macOS CMake package `truehdec QC.app`. The GUI is pure C++17
+through Objective-C runtime C APIs, isolated from Windows/Linux and the encoder.
+Its worker owns AU reading, decoding, replay-based seeking and native output;
+export uses a separate worker/decoder. No persistence or programme PCM cache is
+introduced. `sthd_audio_write_pcm` submits already-rendered physical-order PCM
+with the existing serialized producer and bounded queue contracts. Keep QC
+layouts independent of endpoint count and omit 7.1.5. Metering precedes monitor
+gain, reports clipping, and retains virtual height feeds on stereo endpoints.
+
+Encoder prediction modes are `auto`, `fir2`, `fir4`, `lpc8` and `none`.
+LPC analyzes a bounded restart interval with untapered and Hann-tapered
+autocorrelation; windows never modify encoded PCM. All quantized candidate
+orders compete on actual residual, Huffman, offset and filter signalling cost.
+Ordinary 7.1 input buffers at most one restart interval for analysis. Atmos
+reuses prepared intervals and commits the smallest complete FIR2/FIR4/LPC8
+candidate. Plain major-sync presentation admission is 0x7C; preserve decoder
+support for legacy 0x3C fixtures. `--dialnorm -31` enables neutral DRP PCM
+qualification; unspecified dialnorm retains existing stereo/multichannel
+defaults. Prediction acceptance uses DRP PCM only, never the portable decoder
+or another codec as an oracle. See `Encoder/PREDICTION.md` for public option
+and algorithm documentation.
+
+QC responsiveness uses at most 128 fixed-size complete decoder checkpoints,
+coarsening their spacing for long streams; no growing programme index or PCM
+cache is allowed. `sthd_decoder_clone` preserves FIR/IIR, OAMD pending/origin,
+checksum, EOS, strict policy and playback metadata. `sthd_decoder_playback_levels`
+reports dialnorm without modifying raw decoded PCM. GUI playback explicitly
+applies the selected presentation gain; encoded-PCM mode bypasses it. Height
+layouts route positional elements (LFE element 0); layouts without heights use
+encoded compatibility PCM (LFE slot 3). Display order is side-before-rear while
+raw compatibility extraction retains WAVE order. Keep unavailable ramp origins
+explicit, defer scrubbing until mouse release, and preserve physical endpoint
+labels/order. Rendered-level comparison allows ±0.5 dB relative to Dolby;
+encoded element PCM qualification remains exact. Research evidence stays local.

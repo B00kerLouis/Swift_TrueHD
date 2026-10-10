@@ -15,6 +15,8 @@ struct TrueHDDynamicRangeControl {
     private let profile: TrueHDDRCProfile
     private let channelCount: Int
     private let presentationMaximumChannels: [Int]
+    private let dialogueNormalizations: [Int]
+    private let lfeChannel: Int?
     private let decodedOutputShift: Int
     private var weightingFilters: [BWeightingFilter]
     private var envelopeLevels: [Double]
@@ -26,13 +28,22 @@ struct TrueHDDynamicRangeControl {
         profile: TrueHDDRCProfile,
         channelCount: Int,
         presentationMaximumChannels: [Int],
-        decodedOutputShift: Int = 0
+        decodedOutputShift: Int = 0,
+        dialogueNormalizations: [Int]? = nil,
+        lfeChannel: Int? = nil
     ) {
         precondition(channelCount > 0)
         precondition(presentationMaximumChannels.allSatisfy { $0 < channelCount })
         self.profile = profile
         self.channelCount = channelCount
         self.presentationMaximumChannels = presentationMaximumChannels
+        let normalizations = dialogueNormalizations
+            ?? presentationMaximumChannels.indices.map { $0 == 0 ? 30 : 24 }
+        precondition(normalizations.count == presentationMaximumChannels.count)
+        precondition(normalizations.allSatisfy { (1...31).contains($0) })
+        self.dialogueNormalizations = normalizations
+        self.lfeChannel = lfeChannel ?? (channelCount > 3 ? 3 : nil)
+        precondition(self.lfeChannel.map { (0..<channelCount).contains($0) } ?? true)
         self.decodedOutputShift = decodedOutputShift
         weightingFilters = (0..<channelCount).map { _ in BWeightingFilter(sampleRate: 48_000) }
         envelopeLevels = [Double](repeating: 0, count: presentationMaximumChannels.count)
@@ -64,7 +75,7 @@ struct TrueHDDynamicRangeControl {
                 let sample = Double(samples[base + channel]) * normalization
                 let weighted = weightingFilters[channel].process(sample)
                 // LFE is intentionally excluded from the broadband detector.
-                if channel != 3 { cumulativePeak = max(cumulativePeak, abs(weighted)) }
+                if channel != lfeChannel { cumulativePeak = max(cumulativePeak, abs(weighted)) }
                 while presentation < presentationMaximumChannels.count,
                       channel == presentationMaximumChannels[presentation] {
                     weightedPeaks[presentation] = max(
@@ -92,10 +103,9 @@ struct TrueHDDynamicRangeControl {
             }
 
             let levelDB = 20 * log10(max(envelopeLevels[presentation], 1e-10))
-            let dialogueNormalization = presentation == 0 ? 30 : 24
             let targetDB = profile.gainDB(
                 forWeightedLevel: levelDB,
-                dialogueNormalization: dialogueNormalization
+                dialogueNormalization: dialogueNormalizations[presentation]
             )
             let targetCode = Self.gainCode(forDecibels: targetDB)
             let regularUpdate = accessUnit % Self.accessUnitsPerRegularUpdate == 0
@@ -151,8 +161,8 @@ struct TrueHDDynamicRangeControl {
 extension TrueHDDRCProfile {
     /// Profile transfer curves are expressed at the published -31 dB dialogue
     /// reference, then translated to the presentation's dialogue-normalization
-    /// value. The Film Light cut branch follows its published -26...-11 dB
-    /// early-cut range.
+    /// value. The Film Light cut branch follows its published -21...-11 dB
+    /// early-cut range, with a -41...-21 dB null band.
     func gainDB(forWeightedLevel levelDB: Double, dialogueNormalization: Int) -> Double {
         let translatedLevel = levelDB - Double(31 - dialogueNormalization)
         let gain: Double
@@ -168,7 +178,7 @@ extension TrueHDDRCProfile {
             gain = Self.profileGain(
                 level: translatedLevel,
                 boostFloor: -53, boostCeiling: -41, maximumBoost: 6,
-                nullCeiling: -26, earlyCutCeiling: -11, finalCutCeiling: 4,
+                nullCeiling: -21, earlyCutCeiling: -11, finalCutCeiling: 4,
                 finalRatio: 20
             )
         case .musicStandard:

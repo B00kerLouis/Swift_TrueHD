@@ -56,7 +56,11 @@ offset search. Raw and codebook candidates are compared using their actual VLC,
 LSB, offset-change, and parameter-signalling costs. The encoder also evaluates
 raw PCM, fixed order-1...4 FIR predictors, and data-derived order-1...8
 Levinson-Durbin LPC filters using the residuals produced by the quantized
-coefficients that are written to the stream.
+coefficients that are written to the stream. LPC analyzes a bounded restart
+interval with both untapered and Hann-tapered autocorrelation, and every
+quantized order competes on complete coding cost. The `--prediction` option
+selects `auto|fir2|fir4|lpc8|none`. `--dialnorm -31` gives neutral DRP output
+for exact PCM qualification. See [prediction options](Encoder/PREDICTION.md).
 
 Native Atmos coding treats a restart interval as the independent optimization
 and parallelism boundary. Fixed FIR2, fixed FIR4, and LPC8 interval candidates are
@@ -181,7 +185,7 @@ value before analysis.
 | Profile | Low-level boost | Unity region | High-level behavior |
 |---|---|---|---|
 | `film_standard` | up to +6 dB; 2:1 from -43 to -31 dB | -31 to -26 dB | 2:1 early cut, then 20:1 limiting |
-| `film_light` | up to +6 dB; 2:1 from -53 to -41 dB | -41 to -26 dB | gentler cinema cut; default |
+| `film_light` | up to +6 dB; 2:1 from -53 to -41 dB | -41 to -21 dB | gentler cinema cut; default |
 | `music_standard` | up to +12 dB; 2:1 from -55 to -31 dB | -31 to -26 dB | 2:1 early cut, then 20:1 limiting |
 | `music_light` | up to +12 dB; 2:1 from -65 to -41 dB | -41 to -21 dB | no early-cut branch; 2:1 cut |
 | `speech` | up to +15 dB; 5:1 from -50 to -31 dB | -31 to -26 dB | faster adaptive updates and strong speech limiting |

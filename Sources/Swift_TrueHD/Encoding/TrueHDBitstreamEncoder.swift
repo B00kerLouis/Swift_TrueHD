@@ -15,6 +15,10 @@ final class TrueHDBitstreamEncoder {
     private let firstFrameOfAction: String
     private let outputFrameRate: TrueHDOutputFrameRate
     private let drcProfile: TrueHDDRCProfile
+    private let predictionMode: TrueHDPredictionMode
+    private let stereoDialnorm: Int
+    private let multichannelDialnorm: Int
+    private var lpcAnalysis = [[MLPFIRParameters]](repeating: [], count: 8)
     private var huffmanOffsetsBySubstream = [[Int32]](
         repeating: [Int32](repeating: 0, count: 8), count: 3
     )
@@ -30,12 +34,18 @@ final class TrueHDBitstreamEncoder {
     )
 
     init(configuration: TrueHDEncoderConfiguration) throws {
+        guard (0...31).contains(configuration.dialogueNormalization) else {
+            throw TrueHDError.invalidConfiguration("Invalid dialogue normalization")
+        }
         restartInterval = TrueHDCompliancePolicy.surroundRestartInterval
         peakBitRate = TrueHDCompliancePolicy.peakBitRate
         maximumInputFrames = 0
         firstFrameOfAction = configuration.firstFrameOfAction
         outputFrameRate = configuration.frameRate
         drcProfile = configuration.drcProfile
+        predictionMode = configuration.predictionMode
+        stereoDialnorm = configuration.dialogueNormalization == 0 ? 30 : configuration.dialogueNormalization
+        multichannelDialnorm = configuration.dialogueNormalization == 0 ? 24 : configuration.dialogueNormalization
     }
 
     func encode(
@@ -94,19 +104,42 @@ final class TrueHDBitstreamEncoder {
         var dynamicRangeControl = TrueHDDynamicRangeControl(
             profile: drcProfile,
             channelCount: Self.channelCount,
-            presentationMaximumChannels: [1, 5, 7]
+            presentationMaximumChannels: [1, 5, 7],
+            dialogueNormalizations: [stereoDialnorm, multichannelDialnorm, multichannelDialnorm]
         )
 
+        var intervalSamples = [Int32]()
+        var intervalFrames = 0
+        var intervalOffset = 0
         while frameIndex < totalAccessUnits {
             if frameIndex & 0xFF == 0 {
                 try Task.checkCancellation()
             }
             let encodedFrames = frameIndex * UInt64(Self.samplesPerAccessUnit)
             let remainingFrames = inputFrameCount - encodedFrames
-            let block = try reader.readFrames(
-                maxCount: Int(min(UInt64(Self.samplesPerAccessUnit), remainingFrames))
+            if intervalOffset == intervalFrames {
+                let interval = try reader.readFrames(maxCount: Int(min(
+                    UInt64(restartInterval * Self.samplesPerAccessUnit), remainingFrames
+                )))
+                guard interval.frameCount > 0 else {
+                    throw TrueHDError.unsupportedInput("Input ended before its declared sample count")
+                }
+                intervalSamples = interval.samples
+                intervalFrames = interval.frameCount
+                intervalOffset = 0
+                if predictionMode.includesLPC {
+                    lpcAnalysis = MLPPredictiveCoding.analyzeInterval(
+                        samples: intervalSamples, channels: Self.channelCount
+                    )
+                }
+            }
+            let count = min(Self.samplesPerAccessUnit, intervalFrames - intervalOffset)
+            let start = intervalOffset * Self.channelCount
+            let block = PCMFrameBlock(
+                samples: Array(intervalSamples[start..<(start + count * Self.channelCount)]),
+                frameCount: count
             )
-            guard block.frameCount > 0 else { break }
+            intervalOffset += count
 
             var samples = block.samples
             samples.append(
@@ -388,16 +421,18 @@ final class TrueHDBitstreamEncoder {
         writer.write(3, count: 4) // 2-, 6-, and 8-channel cumulative substreams
         writer.write(0, count: 2)
         writer.write(0, count: 2) // no extended spatial substream
-        writer.write(0x3C, count: 8) // 2-, 6-, and 8-channel presentations
+        // Bit 6 admits the third audio substream in the eight-channel
+        // presentation. With 0x3C DRP accepts transport but outputs silence.
+        writer.write(0x7C, count: 8)
         writer.write(0, count: 6) // heavy DRC start-up gain
         writer.write(8, count: 4) // stereo DRC control enabled by default
         writer.write(0, count: 7) // DRC start-up gain
-        writer.write(30, count: 6) // stereo dialogue normalization
+        writer.write(UInt64(stereoDialnorm), count: 6)
         writer.write(29, count: 6) // stereo mix level
-        writer.write(24, count: 5) // 5.1 dialogue normalization
+        writer.write(UInt64(multichannelDialnorm), count: 5)
         writer.write(35, count: 6) // 5.1 mix level
         writer.write(0, count: 5) // 5.1 source format
-        writer.write(24, count: 5) // 7.1 dialogue normalization
+        writer.write(UInt64(multichannelDialnorm), count: 5)
         writer.write(35, count: 6) // 7.1 mix level
         writer.write(0, count: 6) // 7.1 source format
         writer.write(0, count: 1)
@@ -580,7 +615,10 @@ final class TrueHDBitstreamEncoder {
                 history: filterHistories[channel],
                 previousOffset: huffmanOffsets[channel],
                 activeFIR: activeFIR[channel],
-                allowPrediction: allowPrediction
+                allowPrediction: allowPrediction && predictionMode != .none,
+                maximumOrder: predictionMode.maximumOrder,
+                includeLPC: predictionMode.includesLPC,
+                analysisCandidates: lpcAnalysis[channel]
             )
             decisions.append(decision)
             filterHistories[channel] = decision.finalHistory
