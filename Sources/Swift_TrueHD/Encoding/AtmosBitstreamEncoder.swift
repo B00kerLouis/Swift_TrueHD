@@ -30,6 +30,7 @@ enum AtmosCompatibilityMatrix {
         let outputChannel: Int
         let coefficients: [Int32]
         let coefficientMask: UInt16
+        var coefficientShift: Int = 0
     }
 
     /// Produces Q14 gains for the compatible `L R C LFE Ls Rs Lb Rb`
@@ -287,11 +288,13 @@ enum AtmosCompatibilityMatrix {
         _ transport: ArraySlice<Int32>,
         renderCoefficients: [[Int32]]
     ) -> [Int32] {
+        immersiveOutput(transport, rows: immersiveRows(channelCount: transport.count,
+                                                       renderCoefficients: renderCoefficients))
+    }
+
+    static func immersiveOutput(_ transport: ArraySlice<Int32>, rows: [Row]) -> [Int32] {
         var values = transport.map(Int64.init)
-        for row in immersiveRows(
-            channelCount: values.count,
-            renderCoefficients: renderCoefficients
-        ) {
+        for row in rows {
             let accumulator = zip(values, row.coefficients).reduce(Int64(0)) {
                 $0 + $1.0 * Int64($1.1)
             }
@@ -352,6 +355,7 @@ private struct AtmosEntropyState: Sendable {
 
 private struct PreparedAtmosAccessUnit: Sendable {
     let samples: [Int32]
+    let compatibilitySamples: [Int32]?
     let metadataUpdates: [AtmosMetadataUpdate]?
     let metadataSampleOffset: Int
     let actualFrameCount: Int
@@ -367,6 +371,7 @@ private struct PreparedAtmosAccessUnit: Sendable {
 
 private struct PreparedAtmosSpatialBlock: Sendable {
     let samples: [Int32]
+    let compatibilitySamples: [Int32]?
     let actualFrameCount: Int
     let sourceFrame: UInt64
     let matrixRenderCoefficients: [[Int32]]
@@ -452,20 +457,26 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
     private let outputFrameRate: TrueHDOutputFrameRate
     private let drcProfile: TrueHDDRCProfile
     private let predictionMode: TrueHDPredictionMode
+    private let objectMode: TrueHDObjectMode
     private let stereoDialnorm: Int
     private let multichannelDialnorm: Int
 
     private var decodedOutputShift: Int { 24 - elementBitDepth }
+    private var compatibilityOutputShift: Int {
+        objectMode == .dynamic ? max(6, decodedOutputShift) : decodedOutputShift
+    }
 
     /// The stereo compatibility mix has one bit of headroom before its
     /// presentation-specific dialogue-normalization attenuation.
     /// Apply this only at output so higher layers retain the shared PCM basis.
     private func outputShift(maximumMatrixChannel: Int) -> Int {
-        decodedOutputShift - (maximumMatrixChannel == 1 ? 1 : 0)
+        (maximumMatrixChannel < 8 ? compatibilityOutputShift : decodedOutputShift)
+            - (maximumMatrixChannel == 1 ? 1 : 0)
     }
     private var encodedChannelCount: Int { spatialClusterCount }
     private var oamdSignalPositionIndices: [Int] {
-        Self.oamdPositionOrder(elementCount: spatialClusterCount)
+        objectMode == .dynamic ? Array(0..<spatialClusterCount)
+            : Self.oamdPositionOrder(elementCount: spatialClusterCount)
     }
 
     init(configuration: TrueHDEncoderConfiguration, elementBitDepth: Int = 20) throws {
@@ -487,16 +498,24 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         outputFrameRate = configuration.frameRate
         drcProfile = configuration.drcProfile
         predictionMode = configuration.predictionMode
+        objectMode = configuration.objectMode
         stereoDialnorm = configuration.dialogueNormalization == 0 ? 30 : configuration.dialogueNormalization
         multichannelDialnorm = configuration.dialogueNormalization == 0 ? 24 : configuration.dialogueNormalization
     }
 
     func encode(
-        reader: TrueHDAudioReader,
+        reader inputReader: TrueHDAudioReader,
         outputURL: URL,
         overwrite: Bool,
         progress: (@Sendable (TrueHDEncodingProgress) -> Void)?
     ) throws -> TrueHDEncodingResult {
+        let reader: TrueHDAudioReader
+        if objectMode == .dynamic, !(inputReader is AtmosPreprocessedReader),
+           AtmosPreprocessedReader.isNeeded(for: inputReader) {
+            reader = try AtmosPreprocessedReader(source: inputReader)
+        } else {
+            reader = inputReader
+        }
         guard reader.format.sampleRate == 48_000 else {
             throw TrueHDError.unsupportedInput("Native TrueHD Atmos encoding currently supports 48 kHz ADM")
         }
@@ -523,7 +542,8 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             metadata: metadata,
             sourceChannelCount: reader.format.channelCount,
             elementBitDepth: elementBitDepth,
-            spatialClusterCount: spatialClusterCount
+            spatialClusterCount: spatialClusterCount,
+            objectMode: objectMode
         )
 
         let fileManager = FileManager.default
@@ -550,7 +570,8 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         let elementCache = try spatialCoder.prepareElementCache(
             reader: reader,
             startFrame: sourceTiming.inputStartFrame,
-            frameCount: inputFrameCount
+            frameCount: inputFrameCount,
+            cacheDirectory: outputURL.deletingLastPathComponent()
         )
         let spatialAccuracy = spatialCoder.spatialAccuracyReport()
         let cachedElements = try FileHandle(forReadingFrom: elementCache.url)
@@ -576,14 +597,14 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             profile: drcProfile,
             channelCount: 6,
             presentationMaximumChannels: [5],
-            decodedOutputShift: decodedOutputShift,
+            decodedOutputShift: compatibilityOutputShift,
             dialogueNormalizations: [multichannelDialnorm], lfeChannel: 5
         )
         var eightChannelDRC = TrueHDDynamicRangeControl(
             profile: drcProfile,
             channelCount: 8,
             presentationMaximumChannels: [7],
-            decodedOutputShift: decodedOutputShift,
+            decodedOutputShift: compatibilityOutputShift,
             dialogueNormalizations: [multichannelDialnorm], lfeChannel: 5
         )
         var stereoDRC = TrueHDDynamicRangeControl(
@@ -593,7 +614,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             // DRC analyzes the unattenuated compatibility mix. Its separate
             // stereo dialnorm shifts the profile; the PCM output shift is
             // applied only when the decoder presents the two-channel PCM.
-            decodedOutputShift: decodedOutputShift,
+            decodedOutputShift: compatibilityOutputShift,
             dialogueNormalizations: [stereoDialnorm]
         )
 
@@ -647,13 +668,14 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                         unscaledSamples: Array(unscaledElements[sampleStart..<sampleEnd]),
                         limiterGains: elementCache.limiterGains[gainStart..<gainEnd]
                     )
-                    let quantizedSamples = AtmosCompatibilityMatrix.transportSamples(
-                        standardSamples: standardSamples,
-                        channelCount: encodedChannelCount
-                    )
                     let renderCoefficients = spatialCoder.matrixRenderCoefficients(
                         at: blockSourceFrame + UInt64(blockFrameCount / 2)
                     )
+                    let quantizedSamples = objectMode == .dynamic ? standardSamples
+                        : AtmosCompatibilityMatrix.transportSamples(standardSamples: standardSamples,
+                                                                     channelCount: encodedChannelCount)
+                    var compatibilitySamples: [Int32]? = objectMode == .dynamic
+                        ? makeCompatibilityTransport(elements: standardSamples, render: renderCoefficients) : nil
                     var samples = quantizedSamples
                     samples.append(
                         contentsOf: repeatElement(
@@ -662,9 +684,13 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                                 * encodedChannelCount
                         )
                     )
+                    compatibilitySamples?.append(contentsOf: repeatElement(
+                        0, count: (Self.samplesPerAccessUnit - blockFrameCount) * encodedChannelCount
+                    ))
                     spatialStore.set(
                         PreparedAtmosSpatialBlock(
                             samples: samples,
+                            compatibilitySamples: compatibilitySamples,
                             actualFrameCount: blockFrameCount,
                             sourceFrame: blockSourceFrame,
                             matrixRenderCoefficients: renderCoefficients
@@ -733,7 +759,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                 eightChannelSamples.reserveCapacity(spatialBlock.actualFrameCount * 8)
                 for frame in 0..<spatialBlock.actualFrameCount {
                     let base = frame * encodedChannelCount
-                    let transport = spatialBlock.samples[base..<(base + encodedChannelCount)]
+                    let transport = (spatialBlock.compatibilitySamples ?? spatialBlock.samples)[base..<(base + encodedChannelCount)]
                     stereoSamples.append(contentsOf: transport.prefix(2))
                     sixChannelSamples.append(contentsOf: AtmosCompatibilityMatrix.sixChannelOutput(transport))
                     eightChannelSamples.append(contentsOf: AtmosCompatibilityMatrix.eightChannelOutput(transport))
@@ -759,6 +785,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                 prepared.append(
                     PreparedAtmosAccessUnit(
                         samples: spatialBlock.samples,
+                        compatibilitySamples: spatialBlock.compatibilitySamples,
                         metadataUpdates: metadataUpdates,
                         metadataSampleOffset: metadataSampleOffset,
                         actualFrameCount: spatialBlock.actualFrameCount,
@@ -778,6 +805,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                 updateLosslessChecks(
                     &intervalLosslessChecks,
                     samples: spatialBlock.samples,
+                    compatibilitySamples: spatialBlock.compatibilitySamples,
                     frameCount: spatialBlock.actualFrameCount,
                     matrixRenderCoefficients: spatialBlock.matrixRenderCoefficients
                 )
@@ -789,25 +817,45 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             let batch = prepared
             let intervalCount = (batch.count + restartInterval - 1) / restartInterval
             let predictionConfigurations = predictionMode.intervalCandidates
-            let variantCount = predictionConfigurations.count
+            let predictionCount = predictionConfigurations.count
+            let variantCount = predictionCount * (objectMode == .dynamic ? 2 : 1)
+            let liftPlans = (0..<intervalCount).map { interval -> [AtmosLosslessLift.Step] in
+                guard objectMode == .dynamic else { return [] }
+                let start = interval * restartInterval
+                let end = min(batch.count, start + restartInterval)
+                return AtmosLosslessLift.plan(samples: batch[start..<end].flatMap(\.samples),
+                                              channels: encodedChannelCount)
+            }
             let intervalStore = EncodedAtmosIntervalStore(count: intervalCount * variantCount)
             DispatchQueue.concurrentPerform(iterations: intervalCount * variantCount) { work in
                 let interval = work / variantCount
-                let prediction = predictionConfigurations[work % variantCount]
+                let prediction = predictionConfigurations[work % predictionCount]
+                let useLift = work % variantCount >= predictionCount
+                let lifts = useLift ? liftPlans[interval] : []
+                let aggregateRows = AtmosLosslessLift.rows(lifts, channels: self.encodedChannelCount)
                 let start = interval * restartInterval
                 let end = min(batch.count, start + restartInterval)
                 var entropyState = AtmosEntropyState()
+                let coded = batch[start..<end].map {
+                    AtmosLosslessLift.apply(lifts, samples: $0.samples, channels: self.encodedChannelCount)
+                }
                 let lpcAnalysis = prediction.includesLPC
                     ? MLPPredictiveCoding.analyzeInterval(
-                        samples: batch[start..<end].flatMap(\.samples),
+                        samples: coded.flatMap { $0 },
                         channels: self.encodedChannelCount
                     ) : []
+                let compatibilityLPCAnalysis = prediction.includesLPC && self.objectMode == .dynamic
+                    ? MLPPredictiveCoding.analyzeInterval(
+                        samples: batch[start..<end].flatMap { $0.compatibilitySamples ?? $0.samples },
+                        channels: self.encodedChannelCount
+                    ) : lpcAnalysis
                 var encoded = [[UInt8]]()
                 encoded.reserveCapacity(end - start)
-                for item in batch[start..<end] {
+                for (index, item) in batch[start..<end].enumerated() {
                     encoded.append(
                         self.makeAccessUnit(
-                            samples: item.samples,
+                            samples: coded[index],
+                            compatibilitySamples: item.compatibilitySamples,
                             metadataUpdates: item.metadataUpdates,
                             metadataSampleOffset: item.metadataSampleOffset,
                             actualFrameCount: item.actualFrameCount,
@@ -822,7 +870,9 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                             entropyState: &entropyState,
                             maximumPredictionOrder: prediction.maximumOrder,
                             enableLPC: prediction.includesLPC,
-                            lpcAnalysis: lpcAnalysis
+                            lpcAnalysis: lpcAnalysis,
+                            compatibilityLPCAnalysis: compatibilityLPCAnalysis,
+                            aggregateRows: aggregateRows
                         )
                     )
                 }
@@ -836,7 +886,16 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                 let candidates = variants[
                     (interval * variantCount)..<((interval + 1) * variantCount)
                 ]
-                let best = candidates.min { lhs, rhs in
+                // A smaller interval can still contain one oversized AU.
+                // Keep element precision when another complete candidate is
+                // already within the transport budget for every AU.
+                let maximumAccessUnitBytes = peakBitRate * Self.samplesPerAccessUnit
+                    / (reader.format.sampleRate * 8)
+                let compliant = objectMode == .dynamic ? candidates.filter { candidate in
+                    candidate.allSatisfy { $0.count <= maximumAccessUnitBytes }
+                } : []
+                let eligible = compliant.isEmpty ? Array(candidates) : compliant
+                let best = eligible.min { lhs, rhs in
                     lhs.reduce(0) { $0 + $1.count }
                         < rhs.reduce(0) { $0 + $1.count }
                 }
@@ -908,12 +967,52 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             spatialClusterCount: spatialClusterCount,
             elementBitDepth: elementBitDepth,
             drcProfile: drcProfile,
-            spatialAccuracy: spatialAccuracy
+            spatialAccuracy: spatialAccuracy,
+            objectMode: objectMode
         )
+    }
+
+    /// The independent immersive layer retains its own element PCM. Lower
+    /// presentations receive a separately bounded compatibility render, so a
+    /// rank-deficient spatial scene never forces artificial anchor positions.
+    private func makeCompatibilityTransport(elements: [Int32], render: [[Int32]]) -> [Int32] {
+        let columns = [0, 1, 2, 4, 5, 6, 7] + Array(8..<encodedChannelCount)
+        let limit = Int64((1 << (elementBitDepth - 1)) - 1)
+        var output = [Int32](repeating: 0, count: elements.count)
+        for base in stride(from: 0, to: elements.count, by: encodedChannelCount) {
+            var core = [Int64](repeating: 0, count: 8)
+            core[3] = Int64(elements[base + 3]) >> (20 - elementBitDepth)
+            for speaker in 0..<8 where speaker != 3 {
+                let sum = columns.indices.reduce(Int64(0)) {
+                    $0 + Int64(elements[base + columns[$1]]) * Int64(render[$1][speaker])
+                }
+                core[speaker] = sum >= 0 ? (sum + AtmosCompatibilityMatrix.scale - 1) / AtmosCompatibilityMatrix.scale
+                    : sum / AtmosCompatibilityMatrix.scale
+            }
+            var transport = AtmosCompatibilityMatrix.transportCore(core).map(Int32.init)
+            let six = AtmosCompatibilityMatrix.sixChannelOutput(transport[...])
+            let eight = AtmosCompatibilityMatrix.eightChannelOutput(transport[...])
+            var peak = (six + eight).map { abs(Int64($0)) }.max() ?? 0
+            peak = max(peak, (max(abs(Int64(transport[0])), abs(Int64(transport[1]))) + 1) / 2)
+            if peak > limit {
+                // Allow for the integer lifting's final upward rounding.
+                let gain = Double(max(0, limit - 8)) / Double(peak)
+                core = core.map { Int64(Double($0) * gain) }
+                transport = AtmosCompatibilityMatrix.transportCore(core).map(Int32.init)
+            }
+            // Budget the independently coded compatibility core separately,
+            // retaining at most 18 significant bits there before reducing the
+            // precision of the immersive elements. This is reversible coding
+            // of the generated presentation PCM, not source-track losslessness.
+            let shift = compatibilityOutputShift - decodedOutputShift
+            for channel in 0..<8 { output[base + channel] = transport[channel] >> shift }
+        }
+        return output
     }
 
     private func makeAccessUnit(
         samples: [Int32],
+        compatibilitySamples: [Int32]?,
         metadataUpdates: [AtmosMetadataUpdate]?,
         metadataSampleOffset: Int,
         actualFrameCount: Int,
@@ -928,7 +1027,9 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         entropyState: inout AtmosEntropyState,
         maximumPredictionOrder: Int,
         enableLPC: Bool,
-        lpcAnalysis: [[MLPFIRParameters]]
+        lpcAnalysis: [[MLPFIRParameters]],
+        compatibilityLPCAnalysis: [[MLPFIRParameters]],
+        aggregateRows: [AtmosCompatibilityMatrix.Row]
     ) -> [UInt8] {
         let outputTiming = UInt16(truncatingIfNeeded: frameIndex * UInt64(Self.samplesPerAccessUnit))
         let inputTiming = outputTiming &- UInt16(Self.samplesPerAccessUnit)
@@ -938,6 +1039,8 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         let initialActiveFIR = entropyState.activeFIR
         let resultStore = EncodedAtmosSubstreamStore()
         for index in 0..<4 {
+            let layerSamples = index < 3 ? (compatibilitySamples ?? samples) : samples
+            let layerAnalysis = index < 3 ? compatibilityLPCAnalysis : lpcAnalysis
             var offsets = initialOffsets[index]
             var filterHistories = initialFilterHistories[index]
             var activeFIR = initialActiveFIR[index]
@@ -945,7 +1048,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             switch index {
             case 0:
                 bytes = makeSubstream(
-                    samples: samples, minimumChannel: 0, maximumChannel: 1,
+                    samples: layerSamples, minimumChannel: 0, maximumChannel: 1,
                     maximumMatrixChannel: 1, restartType: 0x31EA,
                     channelAssignments: Array(0...1), timing: outputTiming,
                     frameInInterval: frameInInterval, restartFrame: restartFrame,
@@ -957,11 +1060,11 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                     activeFIR: &activeFIR,
                     maximumPredictionOrder: maximumPredictionOrder,
                     enableLPC: enableLPC,
-                    lpcAnalysis: lpcAnalysis
+                    lpcAnalysis: layerAnalysis
                 )
             case 1:
                 bytes = makeSubstream(
-                    samples: samples, minimumChannel: 2, maximumChannel: 5,
+                    samples: layerSamples, minimumChannel: 2, maximumChannel: 5,
                     maximumMatrixChannel: 5, restartType: 0x31EB,
                     channelAssignments: [0, 5, 4, 1, 2, 3], timing: outputTiming,
                     frameInInterval: frameInInterval, restartFrame: restartFrame,
@@ -973,11 +1076,11 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                     activeFIR: &activeFIR,
                     maximumPredictionOrder: maximumPredictionOrder,
                     enableLPC: enableLPC,
-                    lpcAnalysis: lpcAnalysis
+                    lpcAnalysis: layerAnalysis
                 )
             case 2:
                 bytes = makeSubstream(
-                    samples: samples, minimumChannel: 6, maximumChannel: 7,
+                    samples: layerSamples, minimumChannel: 6, maximumChannel: 7,
                     maximumMatrixChannel: 7, restartType: 0x31EB,
                     channelAssignments: [0, 7, 6, 1, 2, 3, 4, 5], timing: outputTiming,
                     frameInInterval: frameInInterval, restartFrame: restartFrame,
@@ -989,28 +1092,29 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                     activeFIR: &activeFIR,
                     maximumPredictionOrder: maximumPredictionOrder,
                     enableLPC: enableLPC,
-                    lpcAnalysis: lpcAnalysis
+                    lpcAnalysis: layerAnalysis
                 )
             default:
                 bytes = makeSubstream(
-                    samples: samples, minimumChannel: 8,
+                    samples: layerSamples, minimumChannel: objectMode == .dynamic ? 0 : 8,
                     maximumChannel: encodedChannelCount - 1,
                     maximumMatrixChannel: encodedChannelCount - 1,
                     restartType: 0x31EC,
-                    channelAssignments: Self.canonical16ChannelAssignments.filter {
-                        $0 < encodedChannelCount
-                    },
+                    channelAssignments: objectMode == .dynamic
+                        ? [1, 2, 3, 0] + Array(4..<encodedChannelCount)
+                        : Self.canonical16ChannelAssignments.filter { $0 < encodedChannelCount },
                     timing: outputTiming, frameInInterval: frameInInterval,
                     restartFrame: restartFrame, losslessCheck: restartLosslessChecks[3],
                     noiseGeneratorSeed: restartNoiseGeneratorSeeds[3],
                     shortenBy: shortenBy, compatibilityStage: nil,
-                    matrixRenderCoefficients: matrixRenderCoefficients,
+                    matrixRenderCoefficients: objectMode == .dynamic ? nil : matrixRenderCoefficients,
                     highResolutionTiming: highResolutionTiming,
                     huffmanOffsets: &offsets, filterHistories: &filterHistories,
                     activeFIR: &activeFIR,
                     maximumPredictionOrder: maximumPredictionOrder,
                     enableLPC: enableLPC,
-                    lpcAnalysis: lpcAnalysis
+                    lpcAnalysis: layerAnalysis,
+                    aggregateRows: aggregateRows
                 )
             }
             resultStore.set(
@@ -1234,7 +1338,8 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         activeFIR: inout [MLPFIRParameters?],
         maximumPredictionOrder: Int,
         enableLPC: Bool,
-        lpcAnalysis: [[MLPFIRParameters]]
+        lpcAnalysis: [[MLPFIRParameters]],
+        aggregateRows: [AtmosCompatibilityMatrix.Row] = []
     ) -> [UInt8] {
         var writer = BitWriter(reservingCapacity: 1024)
         if restartFrame {
@@ -1259,6 +1364,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                 matrixRenderCoefficients: matrixRenderCoefficients,
                 matrixHasNewConfiguration: matrixRenderCoefficients != nil,
                 outputShift: outputShift(maximumMatrixChannel: maximumMatrixChannel),
+                aggregateRows: aggregateRows,
                 huffmanOffsets: &huffmanOffsets,
                 filterHistories: &filterHistories, activeFIR: &activeFIR,
                 allowPrediction: false,
@@ -1339,7 +1445,8 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         writer.write(UInt64(maximumMatrixChannel), count: 4)
         writer.write(0, count: 4)
         writer.write(UInt64(noiseGeneratorSeed & 0x007F_FFFF), count: 23)
-        writer.write(UInt64(decodedOutputShift), count: 4)
+        writer.write(UInt64(max(decodedOutputShift,
+            outputShift(maximumMatrixChannel: maximumMatrixChannel))), count: 4)
         writer.write(restartType == 0x31EC ? 31 : 24, count: 5)
         writer.write(24, count: 5)
         writer.write(24, count: 5)
@@ -1368,6 +1475,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         matrixRenderCoefficients: [[Int32]]?,
         matrixHasNewConfiguration: Bool = false,
         outputShift: Int? = nil,
+        aggregateRows: [AtmosCompatibilityMatrix.Row] = [],
         huffmanOffsets: inout [Int32],
         filterHistories: inout [[Int32]],
         activeFIR: inout [MLPFIRParameters?],
@@ -1411,7 +1519,10 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         writer.write(0, count: 1) // retain default parameter guards
         writer.write(1, count: 1)
         writer.write(UInt64(frameRange.count), count: 9)
-        if let compatibilityStage {
+        if !aggregateRows.isEmpty {
+            writer.write(1, count: 1)
+            writeMatrixRows(to: &writer, matrixRows: aggregateRows, newConfiguration: true)
+        } else if let compatibilityStage {
             writer.write(1, count: 1)
             writeCompatibilityMatrix(to: &writer, stage: compatibilityStage)
         } else if let matrixRenderCoefficients {
@@ -1426,8 +1537,10 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
         }
         if let outputShift {
             writer.write(1, count: 1)
-            for _ in 0...maximumChannel {
-                writer.writeSigned(Int32(outputShift), count: 4)
+            for channel in 0...maximumChannel {
+                let shift = objectMode == .dynamic && maximumChannel > 7 && channel == 3
+                    ? 4 : outputShift
+                writer.writeSigned(Int32(shift), count: 4)
             }
         } else {
             writer.write(0, count: 1)
@@ -1492,6 +1605,11 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             channelCount: encodedChannelCount,
             renderCoefficients: renderCoefficients
         )
+        writeMatrixRows(to: &writer, matrixRows: matrixRows, newConfiguration: newConfiguration)
+    }
+
+    private func writeMatrixRows(to writer: inout BitWriter,
+                                 matrixRows: [AtmosCompatibilityMatrix.Row], newConfiguration: Bool) {
         writer.write(1, count: 1) // new matrix
         writer.write(newConfiguration ? 1 : 0, count: 1)
         if newConfiguration {
@@ -1499,7 +1617,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             for row in matrixRows {
                 writer.write(UInt64(row.outputChannel), count: 4)
                 writer.write(UInt64(AtmosCompatibilityMatrix.fractionalBits), count: 4)
-                writer.write(1, count: 3) // coefficient shift zero, encoded with a +1 bias
+                writer.write(UInt64(row.coefficientShift + 1), count: 3)
                 writer.write(0, count: 2) // no bypassed LSBs
                 writer.write(0, count: 4) // no dither
                 writer.write(UInt64(row.coefficientMask), count: encodedChannelCount)
@@ -1509,7 +1627,7 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
             for (channel, coefficient) in row.coefficients.enumerated()
                 where row.coefficientMask & (1 << UInt16(channel)) != 0 {
                 writer.writeSigned(
-                    coefficient,
+                    coefficient >> row.coefficientShift,
                     count: AtmosCompatibilityMatrix.fractionalBits + 2
                 )
             }
@@ -1537,12 +1655,16 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
     private func updateLosslessChecks(
         _ checks: inout [UInt32],
         samples: [Int32],
+        compatibilitySamples: [Int32]?,
         frameCount: Int,
         matrixRenderCoefficients: [[Int32]]
     ) {
+        let immersiveRows = objectMode == .dynamic ? [] : AtmosCompatibilityMatrix.immersiveRows(
+            channelCount: encodedChannelCount, renderCoefficients: matrixRenderCoefficients
+        )
         for frame in 0..<frameCount {
             let base = frame * encodedChannelCount
-            let transport = samples[base..<(base + encodedChannelCount)]
+            let transport = (compatibilitySamples ?? samples)[base..<(base + encodedChannelCount)]
             let sixChannel = AtmosCompatibilityMatrix.sixChannelOutput(transport)
             let eightChannel = AtmosCompatibilityMatrix.eightChannelOutput(transport)
             let compatibilityOutputs = [
@@ -1557,12 +1679,11 @@ final class AtmosBitstreamEncoder: @unchecked Sendable {
                 }
             }
 
-            let matrixOutput = AtmosCompatibilityMatrix.immersiveOutput(
-                transport,
-                renderCoefficients: matrixRenderCoefficients
-            )
+            let matrixOutput = objectMode == .dynamic ? Array(samples[base..<(base + encodedChannelCount)])
+                : AtmosCompatibilityMatrix.immersiveOutput(transport, rows: immersiveRows)
             for channel in 0..<encodedChannelCount {
-                let decoded = matrixOutput[channel] &<< decodedOutputShift
+                let shift = objectMode == .dynamic && channel == 3 ? 4 : decodedOutputShift
+                let decoded = matrixOutput[channel] &<< shift
                 let sample = UInt32(bitPattern: decoded) & 0x00FF_FFFF
                 checks[3] ^= sample &<< UInt32(channel & 7)
             }

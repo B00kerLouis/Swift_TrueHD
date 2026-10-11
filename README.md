@@ -20,7 +20,8 @@ compliance decisions. Atmos starts at 20-bit elements and automatically retries
 transport ceiling. The validated restart interval is selected internally.
 
 The internal Atmos spatial coder reduces source ADM tracks to the requested
-12, 14, or 16 transport elements. OAMD elements remain at fixed horizontal and
+12, 14, or 16 transport elements, including one isolated LFE. The explicit
+`--object-mode channelbase` mode keeps OAMD elements at fixed horizontal and
 height anchors while Object motion is represented by continuous equal-power PCM
 panning across that basis. Dense DAMF position updates are smoothed over one
 1,536-sample metadata interval, and each 40-sample access unit interpolates its
@@ -32,9 +33,20 @@ intentionally not described as track-for-track lossless; after spatial coding,
 the transported elements and their 7.1 compatibility-matrix relation are
 lossless.
 
-The 2-, 6-, 8-, and 16-channel presentations each carry a self-contained
-inverse matrix from the shared transport basis. Higher-channel presentations
-do not depend on a lower-channel substream's matrix state. This preserves the
+The default `--object-mode dynamic` mode aggregates the non-LFE sources into
+moving spatial elements and carries their trajectories in OAMD. Both modes
+use the same 12/14/16-element budgets; no high-count source-object transport
+mode is provided. Swift and Objective-C framework callers select
+`TrueHDEncoderConfiguration.objectMode`. The CLI option is optional and both
+Swift and Objective-C configuration default to `dynamic`. Explicit `channelbase`
+selection remains available. Q15 coordinate quantization precedes the OAMD
+wire grid. See [OBJECT_MODES.md](Encoder/OBJECT_MODES.md) for the playback
+validation scope and rendered-level limitations.
+
+Channelbase presentations carry self-contained inverse matrices from their
+shared transport basis. Dynamic carries separate compatibility PCM and an
+independent highest layer with optional reversible element lifts. Higher-channel
+presentations do not depend on a lower-channel substream's matrix state. This preserves the
 intended stereo fold, paired six-channel surrounds, discrete 7.1 bed, and
 independent immersive elements when a decoder switches presentation at run
 time.

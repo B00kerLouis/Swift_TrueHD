@@ -337,8 +337,10 @@ enum AtmosMetadataWriter {
 
     private static func writePosition(_ input: ADMPosition, to writer: inout BitWriter) {
         let position = input.clamped()
-        let encodedX = Int(((position.x + 1) * 31).rounded()).clamped(to: 0...62)
-        let encodedY = Int(((1 - position.y) * 31).rounded()).clamped(to: 0...62)
+        // Quantize signed coordinates before applying the unsigned wire bias.
+        // Rounding after bias reverses the tie at negative half-grid positions.
+        let encodedX = (31 + Int((position.x * 31).rounded())).clamped(to: 0...62)
+        let encodedY = (31 - Int((position.y * 31).rounded())).clamped(to: 0...62)
         let encodedZ = Int((abs(position.z) * 15).rounded()).clamped(to: 0...15)
         writer.write(UInt64(encodedX), count: 6)
         writer.write(UInt64(encodedY), count: 6)

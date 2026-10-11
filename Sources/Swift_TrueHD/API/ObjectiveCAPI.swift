@@ -34,6 +34,11 @@ public final class STTrueHDResult: NSObject, @unchecked Sendable {
     public let outputFrameRateName: String
     public let firstFrameOfAction: String
     public let spatialClusterCount: Int
+    public let objectMode: TrueHDObjectMode
+    public let objectModeName: String
+    public let elementBitDepth: Int
+    public let compatibilityBitDepth: Int
+    public let lfeBitDepth: Int
     public let drcProfile: TrueHDDRCProfile
     public let drcProfileName: String
     public let manifestURL: URL
@@ -52,6 +57,11 @@ public final class STTrueHDResult: NSObject, @unchecked Sendable {
         outputFrameRateName = result.outputFrameRate?.displayName ?? "not indicated"
         firstFrameOfAction = result.firstFrameOfAction
         spatialClusterCount = result.spatialClusterCount
+        objectMode = result.objectMode
+        objectModeName = result.objectMode.commandLineName
+        elementBitDepth = result.elementBitDepth
+        compatibilityBitDepth = result.compatibilityBitDepth
+        lfeBitDepth = result.lfeBitDepth
         drcProfile = result.drcProfile
         drcProfileName = result.drcProfile.commandLineName
         manifestURL = result.manifestURL

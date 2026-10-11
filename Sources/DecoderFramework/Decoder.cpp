@@ -120,7 +120,8 @@ static void restart(Bits &b, Substream &s, unsigned layer, unsigned presentation
     b.skip(16); // output timing, distinct from AU input scheduling
     const unsigned minimum = b.read(4), maximum = b.read(4), matrix_max = b.read(4);
     const unsigned expected_min[4] = {0, 2, 6, 8}, expected_max[3] = {1, 5, 7};
-    supported(minimum == expected_min[layer] && maximum >= minimum && maximum <= 15 &&
+    supported((minimum == expected_min[layer] || (layer == 3 && minimum == 0)) &&
+                  maximum >= minimum && maximum <= 15 &&
                   matrix_max == maximum,
               "unsupported cumulative channel topology");
     if (layer < 3)

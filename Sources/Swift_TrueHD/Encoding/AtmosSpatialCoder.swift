@@ -92,6 +92,10 @@ final class AtmosSpatialCoder: @unchecked Sendable {
     private let coreSourceChannels: [[Int]]
     private let spatialSourceChannels: [Int]
     private let clusterCentres: [ADMPosition]
+    private let objectMode: TrueHDObjectMode
+    private var aggregateTargets = [[ADMPosition]]()
+    private var aggregateActive = [[Bool]]()
+    private var aggregateGainStore: AtmosAggregateGainStore?
     private var preparedProgrammeStart: UInt64?
     private var preparedProgrammeEnd: UInt64?
     private var preparedSourceActivity = [[Double]]()
@@ -100,7 +104,8 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         metadata: ADMMetadata,
         sourceChannelCount: Int,
         elementBitDepth: Int,
-        spatialClusterCount: Int = 16
+        spatialClusterCount: Int = 16,
+        objectMode: TrueHDObjectMode = .channelbase
     ) throws {
         guard sourceChannelCount >= 10 else {
             throw TrueHDError.unsupportedInput("ADM Atmos input must contain at least a 7.1.2 bed")
@@ -140,6 +145,7 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         }
 
         self.metadata = metadata
+        self.objectMode = objectMode
         self.sourceChannelCount = sourceChannelCount
         self.elementBitDepth = elementBitDepth
         minimumElementSample = -(Int64(1) << Int64(elementBitDepth - 1))
@@ -155,6 +161,11 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         coreSourceChannels = directCoreSources
         let coreBedChannels = Set(bedChannels)
         spatialSourceChannels = (0..<sourceChannelCount).filter { channel in
+            if objectMode == .dynamic {
+                return channel != bedChannels[0] && metadata.channels[channel].isPresent
+                    && (coreBedChannels.contains(channel) || metadata.channels[channel].isObject
+                        || ["AC_00011009", "AC_0001100a"].contains(metadata.channels[channel].channelFormatID))
+            }
             guard !coreBedChannels.contains(channel) else { return false }
             let item = metadata.channels[channel]
             guard item.isPresent else { return false }
@@ -211,12 +222,14 @@ final class AtmosSpatialCoder: @unchecked Sendable {
     func prepareElementCache(
         reader: TrueHDAudioReader,
         startFrame: UInt64,
-        frameCount: UInt64
+        frameCount: UInt64,
+        cacheDirectory: URL? = nil
     ) throws -> AtmosPreparedElementCache {
         try prepareSpatialPlans(
-            reader: reader, startFrame: startFrame, frameCount: frameCount
+            reader: reader, startFrame: startFrame, frameCount: frameCount,
+            cacheDirectory: cacheDirectory
         )
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+        let url = (cacheDirectory ?? FileManager.default.temporaryDirectory).appendingPathComponent(
             "turehda-elements-\(UUID().uuidString).pcm64"
         )
         guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
@@ -274,6 +287,12 @@ final class AtmosSpatialCoder: @unchecked Sendable {
                     return
                 }
                 let blockCount = (source.frameCount + 39) / 40
+                if let aggregateGainStore, let programmeStart = preparedProgrammeStart {
+                    let first = Int((sourceFrame - programmeStart) / Self.metadataIntervalSamples) - 1
+                    let last = Int((sourceFrame + UInt64(source.frameCount) - programmeStart)
+                                   / Self.metadataIntervalSamples) + 1
+                    try aggregateGainStore.prepareWindow(first: first, last: last)
+                }
                 let blockStore = UnscaledElementBlockStore(count: blockCount)
                 let chunkStartFrame = sourceFrame
                 let workerCount = min(
@@ -307,12 +326,14 @@ final class AtmosSpatialCoder: @unchecked Sendable {
                     let rendered = block.samples
                     for base in stride(from: 0, to: rendered.count, by: elementCount) {
                         var framePeak: Int64 = 0
-                        for value in rendered[base..<(base + elementCount)] {
-                            framePeak = max(framePeak, absoluteMagnitude(value))
+                        for (channel, value) in rendered[base..<(base + elementCount)].enumerated() {
+                            framePeak = max(framePeak, levelMagnitude(value, channel: channel))
                         }
-                        let core = Array(rendered[base..<(base + 8)])
-                        for value in AtmosCompatibilityMatrix.transportCore(core) {
-                            framePeak = max(framePeak, absoluteMagnitude(value))
+                        if objectMode == .channelbase {
+                            let core = Array(rendered[base..<(base + 8)])
+                            for value in AtmosCompatibilityMatrix.transportCore(core) {
+                                framePeak = max(framePeak, absoluteMagnitude(value))
+                            }
                         }
                         maximumAbs = max(maximumAbs, framePeak)
                         if cacheOutput != nil { framePeaks.append(framePeak) }
@@ -382,10 +403,17 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         value == Int64.min ? Int64.max : abs(value)
     }
 
+    private var lfePrecisionShift: Int { objectMode == .dynamic ? 20 - elementBitDepth : 0 }
+
+    private func levelMagnitude(_ value: Int64, channel: Int) -> Int64 {
+        absoluteMagnitude(value) >> (channel == 3 ? lfePrecisionShift : 0)
+    }
+
     private func prepareSpatialPlans(
         reader: TrueHDAudioReader,
         startFrame: UInt64,
-        frameCount: UInt64
+        frameCount: UInt64,
+        cacheDirectory: URL? = nil
     ) throws {
         preparedProgrammeStart = startFrame
         preparedProgrammeEnd = startFrame + frameCount
@@ -398,13 +426,25 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         )
         guard frameCount > 0, !spatialSourceChannels.isEmpty else { return }
 
+        let spectrum = objectMode == .dynamic
+            ? try AtmosSpectralAnalysis(channels: sourceChannelCount, sources: spatialSourceChannels) : nil
+        let spectralStore = objectMode == .dynamic ? try AtmosSpectralPlanStore(
+            directory: cacheDirectory ?? FileManager.default.temporaryDirectory,
+            sourceCount: spatialSourceChannels.count, elementCount: AtmosSpectralAnalysis.bands
+        ) : nil
+
         try reader.seek(toFrame: startFrame)
         var sourceFrame = startFrame
         let endFrame = startFrame + frameCount
         while sourceFrame < endFrame {
-            let count = Int(min(UInt64(40_960), endFrame - sourceFrame))
+            try Task.checkCancellation()
+            let count = Int(min(objectMode == .dynamic ? Self.metadataIntervalSamples : UInt64(40_960),
+                                endFrame - sourceFrame))
             let source = try reader.readFrames(maxCount: count)
             guard source.frameCount > 0 else { break }
+            if let values = spectrum?.push(samples: source.samples, frames: source.frameCount) {
+                try spectralStore?.append(values)
+            }
             for frame in 0..<source.frameCount {
                 let absoluteFrame = sourceFrame + UInt64(frame)
                 let interval = Int(
@@ -412,8 +452,11 @@ final class AtmosSpatialCoder: @unchecked Sendable {
                 )
                 let sourceBase = frame * sourceChannelCount
                 for (sourceIndex, channel) in spatialSourceChannels.enumerated() {
+                    // Activity controls trajectory handovers before element
+                    // quantization. Keep quiet source tails at input precision;
+                    // a transport-depth change must not move a centroid early.
                     let shifted = Int64(source.samples[sourceBase + channel])
-                        >> Int64(baseInputShift)
+                        >> Int64(objectMode == .dynamic ? 0 : baseInputShift)
                     guard shifted != 0 else { continue }
                     let value = Double(shifted)
                     preparedSourceActivity[interval][sourceIndex] += value * value
@@ -421,6 +464,108 @@ final class AtmosSpatialCoder: @unchecked Sendable {
             }
             sourceFrame += UInt64(source.frameCount)
         }
+        if let values = spectrum?.push(samples: [], frames: 0) { try spectralStore?.append(values) }
+        if objectMode == .dynamic {
+            aggregateTargets.removeAll(keepingCapacity: true)
+            aggregateActive.removeAll(keepingCapacity: true)
+            aggregateGainStore = try AtmosAggregateGainStore(
+                directory: cacheDirectory ?? FileManager.default.temporaryDirectory,
+                sourceCount: spatialSourceChannels.count, elementCount: elementCount - 1
+            )
+            var centres = [ADMPosition](repeating: ADMPosition(x: -1, y: 1, z: 0), count: elementCount - 1)
+            var leaders = [Int](repeating: -1, count: elementCount - 1)
+            let initialPoints = spatialSourceChannels.map { sourcePosition(channel: $0, at: startFrame) }
+            var sampler = AtmosTrajectorySampler(initial: initialPoints)
+            var planLeaders = [[Int]]()
+            var rawPositions = [[ADMPosition]]()
+            for interval in preparedSourceActivity.indices {
+                try Task.checkCancellation()
+                let frame = UInt64(interval) * Self.metadataIntervalSamples
+                let points = sampler.targets(at: frame) { relative in
+                    let at = startFrame + min(relative, frameCount - 1)
+                    return spatialSourceChannels.map { sourcePosition(channel: $0, at: at) }
+                }
+                var energy = preparedSourceActivity[interval]
+                if interval + 1 < preparedSourceActivity.count {
+                    for i in energy.indices { energy[i] += preparedSourceActivity[interval + 1][i] }
+                }
+                if interval % 32 == 0 {
+                    try spectralStore?.prepareWindow(first: interval, last: min(intervalCount - 1, interval + 31))
+                }
+                let bands = spectralStore.map { store in
+                    points.indices.map { Array(store.row(interval: interval, source: $0)) }
+                }
+                let plan = AtmosAggregatePlanner.update(
+                    centres: &centres, points: points,
+                    energy: energy, leaders: &leaders, bands: bands
+                )
+                aggregateTargets.append(plan.positions.map(AtmosAggregatePlanner.quantize))
+                aggregateActive.append(plan.active)
+                planLeaders.append(leaders)
+                rawPositions.append(plan.positions)
+                var gains = [Int32]()
+                gains.reserveCapacity(spatialSourceChannels.count * (elementCount - 1))
+                for source in points.indices {
+                    gains.append(contentsOf: plan.weights(for: points[source], source: source).map {
+                        Int32(($0 * Double(Self.panningScale)).rounded())
+                    })
+                }
+                try aggregateGainStore?.append(gains)
+            }
+            try retimeCentroidTransitions(reader: reader, startFrame: startFrame,
+                                           frameCount: frameCount, leaders: planLeaders, raw: rawPositions)
+        }
+    }
+
+    private func retimeCentroidTransitions(reader: TrueHDAudioReader, startFrame: UInt64,
+                                           frameCount: UInt64, leaders: [[Int]], raw: [[ADMPosition]]) throws {
+        guard let store = aggregateGainStore, !aggregateTargets.isEmpty else { return }
+        let count = elementCount - 1
+        var history = raw[0].map { AtmosCentroidTransition.MetadataState(position: $0) }
+        var previousActive = [Bool](repeating: false, count: count)
+        try reader.seek(toFrame: startFrame)
+        for interval in raw.indices {
+            try Task.checkCancellation()
+            if interval % 31 == 0 {
+                try store.prepareWindow(first: interval - 1, last: min(raw.count - 1, interval + 30))
+            }
+            let first = UInt64(interval) * Self.metadataIntervalSamples
+            let block = try reader.readFrames(maxCount: Int(min(Self.metadataIntervalSamples, frameCount - first)))
+            var before = [Float](), after = [Float]()
+            var active = [Bool](repeating: false, count: count)
+            for source in spatialSourceChannels.indices {
+                let prior = store.row(interval: interval - 1, source: source)
+                let current = store.row(interval: interval, source: source)
+                before += prior.map { Float($0) / Float(Self.panningScale) }
+                after += current.map { Float($0) / Float(Self.panningScale) }
+                let audible = preparedSourceActivity[interval][source] > 0
+                    || (interval + 1 < raw.count && preparedSourceActivity[interval + 1][source] > 0)
+                if audible {
+                    for slot in 0..<count where current[current.startIndex + slot] > 0 { active[slot] = true }
+                }
+            }
+            let (oldEnergy, newEnergy) = AtmosCentroidTransition.energies(
+                samples: block.samples, frames: block.frameCount, channels: sourceChannelCount,
+                sources: spatialSourceChannels, previous: before, current: after, elements: count)
+            var emitted = [ADMPosition]()
+            for slot in 0..<count {
+                let previous = max(0, interval - 1)
+                let direction = AtmosCentroidTransition.direction(
+                    previous: raw[previous][slot], current: raw[interval][slot],
+                    previousLeader: leaders[previous][slot], currentLeader: leaders[interval][slot],
+                    wasActive: previousActive[slot], isActive: active[slot],
+                    previousEnergy: oldEnergy[slot], currentEnergy: newEnergy[slot])
+                let silent = !active[slot] && !previousActive[slot]
+                // The silence flag belongs to each buffered metadata record.
+                // Two silent source intervals alone do not prove that both
+                // the emitted and pending records are already silent.
+                emitted.append(history[slot].advance(to: raw[interval][slot],
+                                                       direction: direction, silent: silent))
+            }
+            if interval > 0 { aggregateTargets[interval - 1] = emitted.map(AtmosAggregatePlanner.quantize) }
+            previousActive = active
+        }
+        aggregateTargets[raw.count - 1] = history.map { AtmosAggregatePlanner.quantize($0.pending) }
     }
 
     func encode(
@@ -437,13 +582,15 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         ).samples
         let peaks = stride(from: 0, to: unscaled.count, by: elementCount).map { base in
             var peak: Int64 = 0
-            for value in unscaled[base..<(base + elementCount)] {
-                peak = max(peak, absoluteMagnitude(value))
+            for (channel, value) in unscaled[base..<(base + elementCount)].enumerated() {
+                peak = max(peak, levelMagnitude(value, channel: channel))
             }
-            for value in AtmosCompatibilityMatrix.transportCore(
-                Array(unscaled[base..<(base + 8)])
-            ) {
-                peak = max(peak, absoluteMagnitude(value))
+            if objectMode == .channelbase {
+                for value in AtmosCompatibilityMatrix.transportCore(
+                    Array(unscaled[base..<(base + 8)])
+                ) {
+                    peak = max(peak, absoluteMagnitude(value))
+                }
             }
             return peak
         }
@@ -468,7 +615,7 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         result.reserveCapacity(unscaledSamples.count)
         for (frameOffset, gain) in limiterGains.enumerated() {
             let base = frameOffset * elementCount
-            for value in unscaledSamples[base..<(base + elementCount)] {
+            for (channel, value) in unscaledSamples[base..<(base + elementCount)].enumerated() {
                 let scaled: Int64
                 if gain == unity {
                     scaled = value
@@ -477,7 +624,11 @@ final class AtmosSpatialCoder: @unchecked Sendable {
                 } else {
                     scaled = -((-value * Int64(gain)) >> 30)
                 }
-                result.append(limitElementSample(scaled))
+                if objectMode == .dynamic && channel == 3 {
+                    result.append(Int32(max(-524_288, min(524_287, scaled))))
+                } else {
+                    result.append(limitElementSample(scaled))
+                }
             }
         }
         return result
@@ -486,13 +637,15 @@ final class AtmosSpatialCoder: @unchecked Sendable {
     func positions(
         at metadataFrame: UInt64
     ) -> [ADMPosition] {
-        _ = metadataFrame
+        if objectMode == .dynamic {
+            let points = aggregatePositions(at: metadataFrame)
+            return [ADMPosition(x: 0, y: 1, z: -1)] + points
+        }
         return Self.fixedElementPositions + clusterCentres
     }
 
-    /// Produces one decoder-valid complete fixed-basis OAMD state per metadata frame.
-    /// Object motion is carried by continuous PCM panning rather than by changing
-    /// element identities or collapsing several elements onto one coordinate.
+    /// Emits one complete OAMD state on the shared sample timeline. Channelbase
+    /// keeps fixed anchors; dynamic transmits the aggregate centroid ramp target.
     func metadataUpdates(
         frameStart: UInt64,
         programmeStart: UInt64,
@@ -513,7 +666,19 @@ final class AtmosSpatialCoder: @unchecked Sendable {
     }
 
     func matrixRenderCoefficients(at metadataFrame: UInt64) -> [[Int32]] {
-        _ = metadataFrame
+        if objectMode == .dynamic {
+            return aggregatePositions(at: metadataFrame).map { point in
+                AtmosCompatibilityMatrix.renderCoefficients(for: point).enumerated().map { speaker, value in
+                    let trim: Int64
+                    switch speaker {
+                    case 4, 5: trim = AtmosCompatibilityMatrix.sideCoefficient
+                    case 6, 7: trim = AtmosCompatibilityMatrix.rearCoefficient
+                    default: trim = AtmosCompatibilityMatrix.scale
+                    }
+                    return Int32((Double(value) * Double(AtmosCompatibilityMatrix.scale) / Double(trim)).rounded())
+                }
+            }
+        }
         return matrixRenderCoefficients
     }
 
@@ -523,6 +688,10 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         sourceStartFrame: UInt64,
         sourceFrameOffset: Int = 0
     ) -> UnscaledElementBlock {
+        if objectMode == .dynamic {
+            return aggregateSamples(source: source, frameCount: frameCount,
+                                    sourceStartFrame: sourceStartFrame, sourceFrameOffset: sourceFrameOffset)
+        }
         let activeSpatialSources = spatialSourceChannels.enumerated().filter { _, channel in
             for frame in 0..<frameCount {
                 let index = (sourceFrameOffset + frame) * sourceChannelCount + channel
@@ -768,6 +937,9 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         var maximumError = 0.0
         var weightedSquaredError = 0.0
         var totalEnergy = 0.0
+        var groupedIntervals = 0
+        var assignmentChanges = 0
+        var previousAssignments = [Int: Int]()
         let basisPositions = [
             ADMPosition(x: -1, y: 1, z: 0),
             ADMPosition(x: 1, y: 1, z: 0),
@@ -784,6 +956,7 @@ final class AtmosSpatialCoder: @unchecked Sendable {
             let active = activity.indices.filter { activity[$0] > 0 }
             maximumActive = max(maximumActive, active.count)
             sourceIntervals += active.count
+            if objectMode == .dynamic && active.count > elementCount - 1 { groupedIntervals += 1 }
 
             let start = preparedProgrammeStart ?? 0
             let intervalStart = start
@@ -797,16 +970,26 @@ final class AtmosSpatialCoder: @unchecked Sendable {
                 let source = sourcePosition(
                     channel: spatialSourceChannels[sourceIndex], at: targetFrame
                 )
-                let gains = quantizedPanningGains(for: source)
+                let positions = objectMode == .dynamic
+                    ? aggregatePositions(at: targetFrame).enumerated().compactMap {
+                        aggregateActive[interval][$0.offset] ? $0.element : nil
+                    } : basisPositions
+                let gains = objectMode == .dynamic
+                    ? AtmosAggregatePlanner.weights(for: source, centres: positions)
+                    : quantizedPanningGains(for: source).map { Double($0) / Double(Self.panningScale) }
+                if objectMode == .dynamic, let slot = gains.indices.max(by: { gains[$0] < gains[$1] }) {
+                    if let previous = previousAssignments[sourceIndex], previous != slot { assignmentChanges += 1 }
+                    previousAssignments[sourceIndex] = slot
+                }
                 var power = 0.0
                 var effective = ADMPosition.centre
                 for element in gains.indices where gains[element] != 0 {
-                    let gain = Double(gains[element]) / Double(Self.panningScale)
+                    let gain = gains[element]
                     let weight = gain * gain
                     power += weight
-                    effective.x += basisPositions[element].x * weight
-                    effective.y += basisPositions[element].y * weight
-                    effective.z += basisPositions[element].z * weight
+                    effective.x += positions[element].x * weight
+                    effective.y += positions[element].y * weight
+                    effective.z += positions[element].z * weight
                 }
                 if power > 0 {
                     effective.x /= power
@@ -826,10 +1009,10 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         return TrueHDSpatialAccuracy(
             intervalCount: preparedSourceActivity.count,
             maximumActiveSpatialSources: maximumActive,
-            groupedIntervalCount: 0,
+            groupedIntervalCount: groupedIntervals,
             sourceIntervalCount: sourceIntervals,
             exactlyRepresentedSourceIntervals: exactSourceIntervals,
-            assignmentChangeCount: 0,
+            assignmentChangeCount: assignmentChanges,
             maximumQuantizedPositionError: maximumError,
             energyWeightedRMSQuantizedPositionError: totalEnergy > 0
                 ? sqrt(weightedSquaredError / totalEnergy)
@@ -841,10 +1024,90 @@ final class AtmosSpatialCoder: @unchecked Sendable {
         let item = metadata.channels[channel]
         if !item.blocks.isEmpty { return item.position(at: frame) }
         switch item.channelFormatID {
+        case "AC_00011001": return ADMPosition(x: -1, y: 1, z: 0)
+        case "AC_00011002": return ADMPosition(x: 1, y: 1, z: 0)
+        case "AC_00011003": return ADMPosition(x: 0, y: 1, z: 0)
+        case "AC_00011005": return ADMPosition(x: -1, y: 0, z: 0)
+        case "AC_00011006": return ADMPosition(x: 1, y: 0, z: 0)
+        case "AC_00011007": return ADMPosition(x: -1, y: -1, z: 0)
+        case "AC_00011008": return ADMPosition(x: 1, y: -1, z: 0)
         case "AC_00011009": return ADMPosition(x: -1, y: 0, z: 1)
         case "AC_0001100a": return ADMPosition(x: 1, y: 0, z: 1)
         default: return .centre
         }
+    }
+
+    private var aggregateAnchors: [ADMPosition] {
+        [1, 2, 3, 6, 7, 4, 5].map { Self.fixedElementPositions[$0] } + clusterCentres
+    }
+
+    private func aggregatePositions(at frame: UInt64) -> [ADMPosition] {
+        guard let start = preparedProgrammeStart, !aggregateTargets.isEmpty else { return aggregateAnchors }
+        let relative = frame > start ? frame - start : 0
+        let interval = min(Int(relative / Self.metadataIntervalSamples), aggregateTargets.count - 1)
+        guard interval > 0 else { return aggregateTargets[0] }
+        let fraction = min(1, Double(relative - UInt64(interval) * Self.metadataIntervalSamples)
+                           / Double(Self.metadataIntervalSamples))
+        return zip(aggregateTargets[interval - 1], aggregateTargets[interval]).map { a, b in
+            ADMPosition(x: a.x + (b.x - a.x) * fraction, y: a.y + (b.y - a.y) * fraction,
+                        z: a.z + (b.z - a.z) * fraction)
+        }
+    }
+
+    private func aggregateSamples(source: [Int32], frameCount: Int, sourceStartFrame: UInt64,
+                                  sourceFrameOffset: Int) -> UnscaledElementBlock {
+        let columns = [0, 1, 2, 4, 5, 6, 7] + Array(8..<elementCount)
+        func gains(sourceIndex: Int, at frame: UInt64) -> [Int64] {
+            guard let store = aggregateGainStore, let start = preparedProgrammeStart else {
+                let point = sourcePosition(channel: spatialSourceChannels[sourceIndex], at: frame)
+                return AtmosAggregatePlanner.weights(for: point, centres: aggregatePositions(at: frame))
+                    .map { Int64(($0 * Double(Self.panningScale)).rounded()) }
+            }
+            let relative = frame > start ? frame - start : 0
+            let interval = Int(relative / Self.metadataIntervalSamples)
+            let current = store.row(interval: interval, source: sourceIndex)
+            guard interval > 0 else { return current.map(Int64.init) }
+            let previous = store.row(interval: interval - 1, source: sourceIndex)
+            let fraction = Double(relative % Self.metadataIntervalSamples) / Double(Self.metadataIntervalSamples)
+            let falling = 1 - fraction
+            return zip(previous, current).map {
+                Int64((Double($0.0) * falling + Double($0.1) * fraction).rounded())
+            }
+        }
+        let plans = spatialSourceChannels.enumerated().compactMap { sourceIndex, channel -> (Int, [Int64], [Int64])? in
+            guard (0..<frameCount).contains(where: {
+                source[(sourceFrameOffset + $0) * sourceChannelCount + channel] != 0
+            }) else { return nil }
+            return (channel, gains(sourceIndex: sourceIndex, at: sourceStartFrame),
+                    gains(sourceIndex: sourceIndex, at: sourceStartFrame + UInt64(frameCount)))
+        }
+        var output = Array(repeating: Int64(0), count: frameCount * elementCount)
+        for frame in 0..<frameCount {
+            let sourceBase = (sourceFrameOffset + frame) * sourceChannelCount
+            let base = frame * elementCount
+            var elements = Array(repeating: Int64(0), count: elementCount)
+            // LFE is an independent fixed element. Spatial precision retries
+            // must not change its waveform or peak-hold behaviour.
+            elements[3] = Int64(source[sourceBase + lfeSourceChannel]) >> 4
+            for (channel, first, last) in plans {
+                let sample = Int64(source[sourceBase + channel])
+                for column in columns.indices {
+                    let gain = (first[column] * Int64(frameCount - frame) + last[column] * Int64(frame)) / Int64(frameCount)
+                    elements[columns[column]] += sample * gain
+                }
+            }
+            // Retain source precision until every contribution has been summed.
+            // Reducing each input first accumulates a source-count-dependent
+            // truncation bias and can erase quiet contributions entirely.
+            let divisor = Self.panningScale << baseInputShift
+            for column in columns {
+                let value = elements[column]
+                elements[column] = value >= 0 ? (value + divisor / 2) / divisor
+                    : -((-value + divisor / 2) / divisor)
+            }
+            for element in 0..<elementCount { output[base + element] = elements[element] }
+        }
+        return UnscaledElementBlock(samples: output)
     }
 
     private func limitElementSample(_ value: Int64) -> Int32 {

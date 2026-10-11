@@ -1,5 +1,13 @@
 # Matrix compatibility: current Swift stream and DME stream
 
+The 2026-10-11 dynamic encoder also uses an independent highest
+substream: minimum channel zero, maximum 11/13/15. The decoder accepts this
+topology alongside the existing cumulative minimum-eight topology. Optional
+Q14 integer lifting rows and per-presentation output shifts use the existing
+matrix and PCM reconstruction paths. This admission does not qualify the
+encoder's rendered playback levels; see `Encoder/OBJECT_MODES.md` for that
+separate gate. The measurements below describe the earlier cumulative stream.
+
 Validated on 2026-10-06 with the same `Dolby_NaturesFury_IMF_IAB.mxf` input.
 The Swift output is freshly built from the current Encoder source; DME is the
 locally installed Encoding Engine 6.5.4-dme. Encoder sources remain unchanged.

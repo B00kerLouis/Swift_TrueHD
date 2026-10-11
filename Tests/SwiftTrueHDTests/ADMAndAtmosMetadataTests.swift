@@ -1413,7 +1413,7 @@ final class ADMAndAtmosMetadataTests: XCTestCase {
             ADMChannelMetadata(channelFormatID: $0, isObject: false, blocks: [])
         })
         for depth in 17...20 {
-            let configuration = TrueHDEncoderConfiguration()
+            let configuration = TrueHDEncoderConfiguration(objectMode: .channelbase)
             configuration.frameRate = .fps24
             let reader = TestAudioReader(
                 channelCount: 10, frameCount: 40,

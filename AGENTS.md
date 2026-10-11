@@ -96,3 +96,27 @@ raw compatibility extraction retains WAVE order. Keep unavailable ramp origins
 explicit, defer scrubbing until mouse release, and preserve physical endpoint
 labels/order. Rendered-level comparison allows ±0.5 dB relative to Dolby;
 encoded element PCM qualification remains exact. Research evidence stays local.
+
+Encoder object-mode work is limited to 12/14/16 total transport elements,
+with isolated LFE and 11/13/15 aggregated non-LFE spatial elements. Do not add
+high-count source-object transport modes. CLI `--object-mode dynamic|channelbase`
+and framework `objectMode` choose moving-centroid OAMD or the fixed basis.
+The CLI option is optional and Swift/Objective-C configuration defaults to
+`dynamic`. Release checks use direct DRP GUI playback and encoded-PCM integrity.
+Per-video-frame/channel +/-0.5 dB render equivalence remains unqualified; do
+not describe GUI playback as proof of that numerical boundary. Preserve native
+meter cadence and held peak/decay state when interpreting numerical comparisons.
+Keep investigation reports and measurements local. See Encoder/OBJECT_MODES.md
+for the public mode contract and validation scope.
+Serialize playback with an exclusive lock, use the verified meter-preserving
+monitor mute, and terminate child playback on interruption. Never overlap
+audible validation processes. See Encoder/OBJECT_MODES.md for current status.
+
+Dynamic's independent highest substream permits reversible, dependency-ordered
+Q14 element lifts without involving LFE. Whole prediction candidates must fit
+every AU's 18 Mbit/s budget. The separate dynamic compatibility core retains at
+most 18 significant bits; immersive elements retain the admitted 20/19/18/17-bit
+precision for non-LFE aggregates; fixed LFE retains 20 bits. Results and logs
+expose element, compatibility and LFE depths. Each layer's output-shift bound,
+DRC analysis and PCM checks must reflect its own precision. Do not confuse exact
+DRP-decoded PCM qualification with rendered playback-meter acceptance.

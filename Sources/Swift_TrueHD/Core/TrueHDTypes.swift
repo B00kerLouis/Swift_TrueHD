@@ -192,6 +192,20 @@ public enum TrueHDPredictionMode: Int, Sendable, CaseIterable {
     }
 }
 
+/// Spatial aggregation policy for the admitted 12/14/16-element presentations.
+/// LFE remains isolated in both modes; neither mode transports source object tracks.
+@objc(STTrueHDObjectMode)
+public enum TrueHDObjectMode: Int, Sendable, CaseIterable {
+    case dynamic, channelbase
+
+    public var commandLineName: String {
+        switch self {
+        case .dynamic: "dynamic"
+        case .channelbase: "channelbase"
+        }
+    }
+}
+
 @objc(STTrueHDEncoderConfiguration)
 @objcMembers
 public final class TrueHDEncoderConfiguration: NSObject, NSCopying, @unchecked Sendable {
@@ -200,6 +214,7 @@ public final class TrueHDEncoderConfiguration: NSObject, NSCopying, @unchecked S
     public var frameRate: TrueHDOutputFrameRate
     public var drcProfile: TrueHDDRCProfile
     public var predictionMode: TrueHDPredictionMode
+    public var objectMode: TrueHDObjectMode
     /// Positive dialnorm magnitude (1...31); zero preserves the established
     /// stereo -30 / multichannel -24 defaults. A value of 31 is unity in DRP.
     public var dialogueNormalization: Int
@@ -224,19 +239,41 @@ public final class TrueHDEncoderConfiguration: NSObject, NSCopying, @unchecked S
         )
     }
 
+    /// Preserve the existing Objective-C selector for configured prediction.
+    public convenience init(
+        spatialClusterCount: Int,
+        firstFrameOfAction: String,
+        frameRate: TrueHDOutputFrameRate,
+        drcProfile: TrueHDDRCProfile,
+        predictionMode: TrueHDPredictionMode,
+        dialogueNormalization: Int
+    ) {
+        self.init(
+            spatialClusterCount: spatialClusterCount,
+            firstFrameOfAction: firstFrameOfAction,
+            frameRate: frameRate,
+            drcProfile: drcProfile,
+            predictionMode: predictionMode,
+            dialogueNormalization: dialogueNormalization,
+            objectMode: .dynamic
+        )
+    }
+
     public init(
         spatialClusterCount: Int = 16,
         firstFrameOfAction: String = "00:00:00:00",
         frameRate: TrueHDOutputFrameRate = .input,
         drcProfile: TrueHDDRCProfile = .filmLight,
         predictionMode: TrueHDPredictionMode = .auto,
-        dialogueNormalization: Int = 0
+        dialogueNormalization: Int = 0,
+        objectMode: TrueHDObjectMode = .dynamic
     ) {
         self.spatialClusterCount = spatialClusterCount
         self.firstFrameOfAction = firstFrameOfAction
         self.frameRate = frameRate
         self.drcProfile = drcProfile
         self.predictionMode = predictionMode
+        self.objectMode = objectMode
         self.dialogueNormalization = dialogueNormalization
     }
 
@@ -247,7 +284,8 @@ public final class TrueHDEncoderConfiguration: NSObject, NSCopying, @unchecked S
             frameRate: frameRate,
             drcProfile: drcProfile,
             predictionMode: predictionMode,
-            dialogueNormalization: dialogueNormalization
+            dialogueNormalization: dialogueNormalization,
+            objectMode: objectMode
         )
     }
 }
@@ -288,6 +326,16 @@ public struct TrueHDEncodingResult: Sendable, Equatable {
     public let elementBitDepth: Int
     public let drcProfile: TrueHDDRCProfile
     public let spatialAccuracy: TrueHDSpatialAccuracy?
+    public var objectMode: TrueHDObjectMode = .channelbase
+
+    /// Significant PCM bits retained in the generated compatibility core.
+    public var compatibilityBitDepth: Int {
+        profile == .atmos && objectMode == .dynamic ? min(18, elementBitDepth) : elementBitDepth
+    }
+
+    public var lfeBitDepth: Int {
+        profile == .atmos && objectMode == .dynamic ? 20 : elementBitDepth
+    }
 
     public var manifestURL: URL {
         URL(fileURLWithPath: outputURL.path + ".mll")

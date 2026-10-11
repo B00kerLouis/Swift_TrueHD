@@ -13,23 +13,29 @@ rejected explicitly.
 2. Plain 7.1 input uses `L R C LFE Lb Rb Ls Rs` order and three cumulative
    substreams carrying channels 0..1, 2..5 and 6..7.
 3. For Atmos, `AtmosSpatialCoder.prepareElementCache` prepares IAB decoding,
-   spatial anchor reduction and headroom/limiting. The stable basis consists
-   of eight ground/LFE elements and 4/6/8 height elements. Complete object
-   tracks are not written individually into TrueHD.
+   spatial reduction and headroom/limiting. Channelbase uses eight ground/LFE
+   elements and 4/6/8 height elements. Dynamic uses one isolated LFE and
+   11/13/15 moving non-LFE aggregates. Complete source object tracks are not
+   written individually into TrueHD.
 4. Each 40-sample AU transforms elements into a shared transport basis. The
    first two values include center and surround folding. Subsequent substreams
    use their own inverse matrices to produce 5.1, 7.1 and immersive elements.
    The fourth-layer matrix executes row by row; it cannot reuse transport PCM
-   that has already passed through the 7.1 inverse matrix.
+   that has already passed through the 7.1 inverse matrix. Dynamic instead
+   codes the highest layer independently with minimum channel zero; optional
+   dependency-ordered Q14 lifts reconstruct its original integer element PCM.
+   Its compatibility core and immersive layer may declare different output
+   shifts. Each restart header bounds its own declared shift.
 5. The first block of each restart AU contains eight raw samples that seed the
    FIR filter, followed by a 32-sample block. Subsequent AUs normally contain
    40 samples. Fixed-order FIR and LPC analysis both produce quantized FIR
    coefficients. Actual coding cost selects among three fixed MLP Huffman
    codebooks and signed 15-bit offsets. Offsets and filter parameters persist
    between AUs.
-6. OAMD carries fixed spatial positions; the Encoder's PCM panning already
-   represents original object motion. The Evolution HMAC covers the complete
-   AU prefix and the canonical frame with authentication fields cleared.
+6. Channelbase OAMD carries fixed spatial positions. Dynamic OAMD carries
+   moving aggregate targets aligned with their PCM and transition history;
+   source-object motion is spatially reduced before compression. The Evolution
+   HMAC covers the complete AU prefix and the canonical frame with authentication fields cleared.
    The transport rewriter updates input timing and peak rate, then renews
    authentication.
 

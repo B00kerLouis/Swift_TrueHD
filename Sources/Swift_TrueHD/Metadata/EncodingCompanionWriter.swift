@@ -37,8 +37,8 @@ enum EncodingCompanionWriter {
             let renderingAnchorCount = max(0, result.spatialClusterCount - 1)
             spatialAnalysis = """
 
-        Fixed-basis spatial approximation
-          Fixed non-LFE rendering anchors: \(renderingAnchorCount)
+        \(result.objectMode.commandLineName) spatial aggregation
+          Non-LFE transport elements: \(renderingAnchorCount)
           Metadata intervals: \(accuracy.intervalCount)
           Maximum active spatial sources: \(accuracy.maximumActiveSpatialSources)
           Source-interval observations: \(accuracy.sourceIntervalCount)
@@ -68,6 +68,7 @@ enum EncodingCompanionWriter {
 
         User options
           Spatial clusters: \(result.spatialClusterCount == 0 ? "not applicable" : String(result.spatialClusterCount))
+          Object mode: \(result.objectMode.commandLineName)
           Frame-rate selection: \(frameRateSelectionName(configuration.frameRate))
           DRC profile: \(result.drcProfile.commandLineName)
           Prediction search: \(configuration.predictionMode.commandLineName)
@@ -76,6 +77,8 @@ enum EncodingCompanionWriter {
         Automatic compliance policy
           Profile: \(profileName(result.profile))
           Element bit depth: \(result.elementBitDepth)
+          Compatibility bit depth: \(result.compatibilityBitDepth)
+          LFE bit depth: \(result.lfeBitDepth)
           Restart interval: \(restartInterval(result.profile))
           Peak bit rate limit: \(TrueHDCompliancePolicy.peakBitRate) bits/second
         \(spatialAnalysis)
@@ -119,6 +122,7 @@ enum EncodingCompanionWriter {
 
         let options = XMLElement(name: "options")
         options.addChild(element("spatial-clusters", String(result.spatialClusterCount)))
+        options.addChild(element("object-mode", result.objectMode.commandLineName))
         options.addChild(element("ffoa", result.firstFrameOfAction))
         options.addChild(element("frame-rate", result.outputFrameRate?.displayName ?? "not_indicated"))
         options.addChild(element("frame-rate-selection", frameRateSelectionName(configuration.frameRate)))
@@ -130,6 +134,8 @@ enum EncodingCompanionWriter {
         let compliance = XMLElement(name: "automatic-compliance")
         compliance.addChild(element("profile", profileName(result.profile)))
         compliance.addChild(element("element-bit-depth", String(result.elementBitDepth)))
+        compliance.addChild(element("compatibility-bit-depth", String(result.compatibilityBitDepth)))
+        compliance.addChild(element("lfe-bit-depth", String(result.lfeBitDepth)))
         compliance.addChild(element("restart-interval", String(restartInterval(result.profile))))
         compliance.addChild(element("peak-bit-rate", String(TrueHDCompliancePolicy.peakBitRate)))
         root.addChild(compliance)
@@ -138,7 +144,7 @@ enum EncodingCompanionWriter {
             let spatial = XMLElement(name: "spatial-accuracy")
             spatial.addChild(element(
                 "available-spatial-elements",
-                String(max(0, result.spatialClusterCount - 8))
+                String(max(0, result.spatialClusterCount - (result.objectMode == .dynamic ? 1 : 8)))
             ))
             spatial.addChild(element("metadata-intervals", String(accuracy.intervalCount)))
             spatial.addChild(element(

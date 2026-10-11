@@ -52,6 +52,12 @@ private struct TurehdaCLI {
             case "--drc-profile":
                 let value = try requiredValue(for: option, at: &index, in: arguments)
                 configuration.drcProfile = try parseDRCProfile(value)
+            case "--object-mode":
+                let value = try requiredValue(for: option, at: &index, in: arguments)
+                guard let mode = TrueHDObjectMode.allCases.first(where: {
+                    $0.commandLineName == value.lowercased()
+                }) else { throw CLIError.unknownOption("--object-mode \(value) (expected dynamic|channelbase)") }
+                configuration.objectMode = mode
             case "--prediction":
                 let value = try requiredValue(for: option, at: &index, in: arguments)
                 guard let mode = TrueHDPredictionMode.allCases.first(where: {
@@ -99,12 +105,12 @@ private struct TurehdaCLI {
         if let accuracy = result.spatialAccuracy {
             let renderingAnchorCount = max(0, result.spatialClusterCount - 1)
             print(
-                "Fixed-basis spatial approximation: max XYZ deviation "
+                "\(result.objectMode.commandLineName) spatial aggregation: max XYZ deviation "
                     + "\(String(format: "%.6f", accuracy.maximumQuantizedPositionError)), "
                     + "energy-weighted RMS "
                     + "\(String(format: "%.6f", accuracy.energyWeightedRMSQuantizedPositionError)); "
                     + "maximum \(accuracy.maximumActiveSpatialSources) active spatial sources "
-                    + "across \(renderingAnchorCount) fixed non-LFE anchors"
+                    + "across \(renderingAnchorCount) non-LFE elements"
             )
         }
         print("Job manifest: \(result.manifestURL.path)")
@@ -163,6 +169,7 @@ private struct TurehdaCLI {
               -i, --input PATH                 Input WAVE, DAMF, or MXF IAB master
               -o, --output PATH.mlp            Output TrueHD elementary stream
               -sc,--spatial-clusters 12|14|16  Atmos transport elements (default: 16)
+                  --object-mode MODE           dynamic|channelbase (default: dynamic)
                   --ffoa HH:MM:SS:FF           Output start timecode (default: 00:00:00:00)
                   --frame-rate RATE            23.976|24|25|29.97|30|47.952|48|50|59.94|60
                   --drc-profile PROFILE        film_standard|film_light|music_standard|
